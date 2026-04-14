@@ -17,7 +17,7 @@ public class App {
     public static void main(String[] args) {
         try {
             GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
-            LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+            LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1);
             List<CommitInfo> todayCommits = new ArrayList<>();
 
             System.out.println("🔍 오늘 날짜의 활동을 분석 중입니다...");
