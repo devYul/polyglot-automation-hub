@@ -6,7 +6,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
 
-public class App {
+public class AppTest {
     public static void main(String[] args) {
         try {
             String token = System.getenv("GITHUB_TOKEN");
