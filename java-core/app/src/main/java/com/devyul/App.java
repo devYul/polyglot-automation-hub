@@ -13,6 +13,7 @@ public class App {
     private static final String GITHUB_TOKEN = System.getenv("GITHUB_TOKEN");
     private static final String NOTION_TOKEN = System.getenv("NOTION_TOKEN");
     private static final String NOTION_DB_ID = System.getenv("NOTION_DB_ID");
+    private static final String SLACK_WEBHOOK_URL = System.getenv("SLACK_WEBHOOK_URL");
 
     public static void main(String[] args) {
         try {
@@ -46,7 +47,9 @@ public class App {
             if (!todayCommits.isEmpty()) {
                 sendToNotion(today.toString(), todayCommits);
             } else {
-                System.out.println("⚠️ 오늘 기록된 커밋 활동이 없습니다.");
+                // 오늘 커밋이 없으면 Jarvis-Yul이 출동합니다!
+                System.out.println("⚠️ 커밋 내역 없음. Jarvis-Yul에게 긴급 타전합니다.");
+                sendToSlack("🚨 주인님, 오늘 아직 잔디를 안 심으셨습니다! 12월 결혼식 준비로 바쁘시겠지만, 1일 1커밋은 지키셔야죠? ㅡㅡ^");
             }
 
         } catch (Exception e) {
@@ -145,5 +148,29 @@ public class App {
         }
         wrapper.add("multi_select", array);
         return wrapper;
+    }
+
+    private static void sendToSlack(String message) throws IOException {
+        if (SLACK_WEBHOOK_URL == null || SLACK_WEBHOOK_URL.isEmpty())
+            return;
+
+        OkHttpClient client = new OkHttpClient();
+        JsonObject json = new JsonObject();
+        json.addProperty("text", message);
+
+        RequestBody body = RequestBody.create(
+                new Gson().toJson(json),
+                MediaType.get("application/json; charset=utf-8"));
+
+        Request request = new Request.Builder()
+                .url(SLACK_WEBHOOK_URL)
+                .post(body)
+                .build();
+
+        try (Response response = client.newCall(request).execute()) {
+            if (response.isSuccessful()) {
+                System.out.println("🔔 Jarvis-Yul이 슬랙 보고를 마쳤습니다.");
+            }
+        }
     }
 }
