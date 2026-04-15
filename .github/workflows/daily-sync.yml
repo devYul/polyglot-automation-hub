@@ -20,14 +20,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Run Automation
+      - name: Run Jarvis-Yul
         env:
           # GitHub 환경 변수(Secrets)에서 값을 가져옵니다.
           GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GMAIL_TOKEN: ${{ secrets.GMAIL_TOKEN }}
+          GMAIL_CREDENTIALS: ${{ secrets.GMAIL_CREDENTIALS }}
         run: |
           cd java-core
           chmod +x gradlew
-          ./gradlew run
+          ./gradlew run -x test

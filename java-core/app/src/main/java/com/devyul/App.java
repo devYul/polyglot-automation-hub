@@ -214,7 +214,22 @@ public class App {
     // --- [추가] Google API 인증 및 Gmail 연동 메서드 ---
 
     private static Gmail getGmailService() throws Exception {
-        // 1. 서버(GitHub Actions) 환경인지 확인하고 토큰 복원
+        // 1. [추가] credentials.json 복구 (Client ID/Secret)
+        String base64Credentials = System.getenv("GMAIL_CREDENTIALS");
+        if (base64Credentials != null && !base64Credentials.isEmpty()) {
+            // resources 폴더 경로 확보 (서버 환경에 맞춰 생성)
+            File resDir = new File("app/src/main/resources");
+            if (!resDir.exists())
+                resDir.mkdirs();
+
+            byte[] decoded = Base64.getDecoder().decode(base64Credentials);
+            try (FileOutputStream fos = new FileOutputStream(new File(resDir, "credentials.json"))) {
+                fos.write(decoded);
+            }
+            System.out.println("🔑 서버 환경: credentials.json 복구 완료!");
+        }
+
+        // 2. GMAIL_TOKEN 복구 (기존에 작성한 StoredCredential 복구 로직)
         String base64Token = System.getenv("GMAIL_TOKEN");
         if (base64Token != null && !base64Token.isEmpty()) {
             File tokenDir = new File(TOKENS_DIRECTORY_PATH);
@@ -228,14 +243,14 @@ public class App {
             System.out.println("🔑 서버 환경: 인증 토큰 복원 완료!");
         }
 
-        // 2. credentials.json 로드 (기존 로직)
+        // 3. credentials.json 로드 (기존 로직)
         InputStream in = App.class.getResourceAsStream(CREDENTIALS_FILE_PATH);
         if (in == null)
             throw new FileNotFoundException("Resource not found: " + CREDENTIALS_FILE_PATH);
 
         GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in));
 
-        // 3. 인증 흐름 설정
+        // 4. 인증 흐름 설정
         GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
                 GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, clientSecrets, SCOPES)
                 .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY_PATH)))
