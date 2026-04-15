@@ -47,11 +47,18 @@ public class App {
             }
 
             if (!todayCommits.isEmpty()) {
+                // 1. 노션 기록
                 sendToNotion(displayDate.toString(), todayCommits);
+
+                // 2. 슬랙 성공 보고 (추가!)
+                String successMsg = String.format(
+                        "✅ [성공 보고] 주인님, 오늘 %d개의 잔디를 무사히 심으셨습니다! 노션에 예쁘게 박제해두었으니 확인해 보세요. 고생하셨습니다! 🚀",
+                        todayCommits.size());
+                sendToSlack(successMsg);
             } else {
-                // 오늘 커밋이 없으면 Jarvis-Yul이 출동합니다!
-                System.out.println("⚠️ 커밋 내역 없음. Jarvis-Yul에게 긴급 타전합니다.");
-                sendToSlack("🚨 주인님, 오늘 아직 잔디를 안 심으셨습니다! 12월 결혼식 준비로 바쁘시겠지만, 1일 1커밋은 지키셔야죠? ㅡㅡ^");
+                // 커밋이 없을 때 (기존 경고)
+                System.out.println("⚠️ 활동 내역 없음. Jarvis-Yul이 슬랙으로 보고를 시작합니다.");
+                sendToSlack("🚨 [긴급 보고] 주인님, 오늘 아직 잔디를 안 심으셨습니다! Jarvis-Yul이 지켜보고 있으니 서둘러 커밋 부탁드립니다. ㅡㅡ^");
             }
 
         } catch (Exception e) {
