@@ -1,9 +1,12 @@
 name: Daily Commit Sync to Notion
 
 on:
+  push:
+    branches: [ main ]
   schedule:
-    - cron: '50 14 * * *' # UTC 14:50 = KST 23:50
-  workflow_dispatch: # 직접 실행 버튼 활성화
+    # 매일 한국 시간 오후 10시 00분에 자동 실행 (UTC 기준 13:00)
+    - cron: '0 13 * * *'
+  workflow_dispatch: # 언제든 직접 실행할 수 있는 버튼 유지
 
 jobs:
   build:
