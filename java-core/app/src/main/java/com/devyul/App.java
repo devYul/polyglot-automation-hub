@@ -3,7 +3,20 @@ package com.devyul;
 import org.kohsuke.github.*;
 import okhttp3.*;
 import com.google.gson.*;
-import java.io.IOException;
+import com.google.api.client.auth.oauth2.Credential;
+import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp;
+import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
+import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
+import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
+import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.json.gson.GsonFactory;
+import com.google.api.client.util.store.FileDataStoreFactory;
+import com.google.api.services.gmail.Gmail;
+import com.google.api.services.gmail.GmailScopes;
+import com.google.api.services.gmail.model.ListMessagesResponse;
+import com.google.api.services.gmail.model.Message;
+
+import java.io.*;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
@@ -15,8 +28,23 @@ public class App {
     private static final String NOTION_DB_ID = System.getenv("NOTION_DB_ID");
     private static final String SLACK_WEBHOOK_URL = System.getenv("SLACK_WEBHOOK_URL");
 
+    // Google API 관련 상수
+    private static final String APPLICATION_NAME = "Jarvis-Yul-Automation";
+    private static final GsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
+    private static final String TOKENS_DIRECTORY_PATH = "tokens";
+    private static final List<String> SCOPES = Collections.singletonList(GmailScopes.GMAIL_READONLY);
+    private static final String CREDENTIALS_FILE_PATH = "/credentials.json";
+
     public static void main(String[] args) {
         try {
+            System.out.println("🚀 Jarvis-Yul 시스템 가동 중...");
+
+            // --- Gmail 서비스 시작 ---
+            System.out.println("📧 메일함을 확인하는 중...");
+            Gmail gmailService = getGmailService();
+            checkNewEmails(gmailService);
+            // ------------------------------
+
             GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
             LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
             LocalDate fetchDate = displayDate.minusDays(1);
@@ -180,6 +208,67 @@ public class App {
             if (response.isSuccessful()) {
                 System.out.println("🔔 Jarvis-Yul이 슬랙 보고를 마쳤습니다.");
             }
+        }
+    }
+
+    // --- [추가] Google API 인증 및 Gmail 연동 메서드 ---
+
+    private static Gmail getGmailService() throws Exception {
+        // 1. 서버(GitHub Actions) 환경인지 확인하고 토큰 복원
+        String base64Token = System.getenv("GMAIL_TOKEN");
+        if (base64Token != null && !base64Token.isEmpty()) {
+            File tokenDir = new File(TOKENS_DIRECTORY_PATH);
+            if (!tokenDir.exists())
+                tokenDir.mkdirs();
+
+            byte[] decodedBytes = Base64.getDecoder().decode(base64Token);
+            try (FileOutputStream fos = new FileOutputStream(new File(tokenDir, "StoredCredential"))) {
+                fos.write(decodedBytes);
+            }
+            System.out.println("🔑 서버 환경: 인증 토큰 복원 완료!");
+        }
+
+        // 2. credentials.json 로드 (기존 로직)
+        InputStream in = App.class.getResourceAsStream(CREDENTIALS_FILE_PATH);
+        if (in == null)
+            throw new FileNotFoundException("Resource not found: " + CREDENTIALS_FILE_PATH);
+
+        GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in));
+
+        // 3. 인증 흐름 설정
+        GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
+                GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, clientSecrets, SCOPES)
+                .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY_PATH)))
+                .setAccessType("offline")
+                .build();
+
+        // 서버에서는 여기서 브라우저를 띄우지 않고, 복원된 파일로 바로 승인을 마칩니다.
+        Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver()).authorize("user");
+
+        return new Gmail.Builder(GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, credential)
+                .setApplicationName(APPLICATION_NAME)
+                .build();
+    }
+
+    private static void checkNewEmails(Gmail service) throws IOException {
+        // 읽지 않은 메일 3건 조회
+        ListMessagesResponse response = service.users().messages().list("me")
+                .setQ("is:unread")
+                .setMaxResults(3L)
+                .execute();
+
+        List<Message> messages = response.getMessages();
+        if (messages != null && !messages.isEmpty()) {
+            for (Message message : messages) {
+                Message fullMessage = service.users().messages().get("me", message.getId()).execute();
+                String snippet = fullMessage.getSnippet();
+
+                System.out.println("📧 새 메일 발견: " + snippet);
+                String slackMsg = "📬 [메일 알림] 주인님, 새 메일이 도착했습니다!\n> " + snippet;
+                sendToSlack(slackMsg);
+            }
+        } else {
+            System.out.println("✅ 확인된 새 메일이 없습니다.");
         }
     }
 }

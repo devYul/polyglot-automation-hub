@@ -3,3 +3,11 @@
 
 # Ignore Gradle build output directory
 build
+
+# Google Auth Tokens
+**/tokens/
+StoredCredential
+
+# Google Credentials
+credentials.json
+**/src/main/resources/credentials.json
