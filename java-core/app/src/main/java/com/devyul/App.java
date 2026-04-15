@@ -18,14 +18,16 @@ public class App {
     public static void main(String[] args) {
         try {
             GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
-            LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1);
+            LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+            LocalDate fetchDate = displayDate.minusDays(1);
+            ;
             List<CommitInfo> todayCommits = new ArrayList<>();
 
             System.out.println("🔍 오늘 날짜의 활동을 분석 중입니다...");
 
             for (GHRepository repo : github.getMyself().listRepositories()) {
                 List<GHCommit> commits = repo.queryCommits()
-                        .since(java.sql.Date.valueOf(today))
+                        .since(java.sql.Date.valueOf(fetchDate))
                         .list().toList();
 
                 if (!commits.isEmpty()) {
@@ -45,7 +47,7 @@ public class App {
             }
 
             if (!todayCommits.isEmpty()) {
-                sendToNotion(today.toString(), todayCommits);
+                sendToNotion(displayDate.toString(), todayCommits);
             } else {
                 // 오늘 커밋이 없으면 Jarvis-Yul이 출동합니다!
                 System.out.println("⚠️ 커밋 내역 없음. Jarvis-Yul에게 긴급 타전합니다.");
