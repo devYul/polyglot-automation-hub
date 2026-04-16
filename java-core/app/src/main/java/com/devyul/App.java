@@ -22,6 +22,13 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
+import java.io.StringReader;
 
 public class App {
     private static final String GITHUB_TOKEN = System.getenv("GITHUB_TOKEN");
@@ -34,8 +41,6 @@ public class App {
     private static final List<String> SCOPES = Collections.singletonList(GmailScopes.GMAIL_READONLY);
 
     private static final String TOKENS_DIRECTORY = "tokens";
-
-    private static final String NEWS_API_KEY = System.getenv("NEWS_API_KEY");
 
     public static void main(String[] args) {
         try {
@@ -273,67 +278,54 @@ public class App {
     }
 
     private static void getHeadlineNews() {
-        System.out.println("📰 카테고리별 헤드라인 뉴스 수집 중...");
-
-        String apiKey = System.getenv("NEWS_API_KEY");
-        if (apiKey == null || apiKey.trim().isEmpty()) {
-            System.err.println("⚠️ NEWS_API_KEY가 없어 뉴스 브리핑을 건너뜁니다.");
-            return;
-        }
+        System.out.println("📰 구글 뉴스(RSS) 카테고리별 수집 중...");
 
         try {
             OkHttpClient client = new OkHttpClient();
             StringBuilder slackMessage = new StringBuilder();
             slackMessage.append("📰 *[자비스 모닝 종합 브리핑]*\n\n");
 
+            // 구글 뉴스 전용 카테고리 코드
             Map<String, String> categories = new LinkedHashMap<>();
-            categories.put("business", "📈 경제/비즈니스");
-            categories.put("technology", "💻 IT/기술");
-            categories.put("general", "🌐 사회/일반");
-            categories.put("science", "🔬 과학");
-            categories.put("entertainment", "🎬 엔터테인먼트");
+            categories.put("BUSINESS", "📈 경제/비즈니스");
+            categories.put("TECHNOLOGY", "💻 IT/기술");
+            categories.put("NATION", "🌐 국내/사회");
+            categories.put("ENTERTAINMENT", "🎬 엔터테인먼트");
 
             int totalNewsCount = 0;
 
+            // 자바 내장 XML 파서 세팅
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+
             for (Map.Entry<String, String> entry : categories.entrySet()) {
-                String cat = entry.getKey();
+                String catCode = entry.getKey();
                 String catName = entry.getValue();
 
-                String url = "https://newsapi.org/v2/top-headlines?country=kr&category=" + cat + "&apiKey=" + apiKey;
+                // 구글 뉴스 RSS URL (한국어, 한국 지역 설정)
+                String url = "https://news.google.com/rss/headlines/section/topic/" + catCode
+                        + "?hl=ko&gl=KR&ceid=KR:ko";
                 Request request = new Request.Builder().url(url).build();
 
                 try (Response response = client.newCall(request).execute()) {
-                    // ⚠️ [디버그] 성공/실패 상관없이 API가 보낸 원본 메시지를 무조건 까봅니다!
-                    String responseBody = response.body().string();
-
                     if (!response.isSuccessful()) {
-                        System.out.println(
-                                "❌ [" + catName + "] API 차단됨! 상태코드: " + response.code() + ", 응답: " + responseBody);
+                        System.out.println("❌ [" + catName + "] 호출 실패: " + response.code());
                         continue;
                     }
 
-                    // ⚠️ [디버그] 정상 응답이라도 안에 데이터가 비어있는지 눈으로 확인합니다.
-                    System.out.println("📡 [" + catName + "] API 원본: "
-                            + responseBody.substring(0, Math.min(200, responseBody.length())) + "... (생략)");
+                    String xmlString = response.body().string();
+                    Document doc = builder.parse(new InputSource(new StringReader(xmlString)));
+                    NodeList itemNodes = doc.getElementsByTagName("item");
 
-                    JsonObject jsonObject = JsonParser.parseString(responseBody).getAsJsonObject();
-                    JsonArray articles = jsonObject.getAsJsonArray("articles");
-
-                    if (articles != null && articles.size() > 0) {
+                    if (itemNodes.getLength() > 0) {
                         slackMessage.append("*").append(catName).append("*\n");
-                        int count = 0;
-                        for (JsonElement element : articles) {
-                            if (count >= 2)
-                                break;
-                            JsonObject article = element.getAsJsonObject();
-                            if (!article.has("title") || article.get("title").isJsonNull())
-                                continue;
+                        // 상위 2개 뉴스만 추출
+                        for (int i = 0; i < Math.min(2, itemNodes.getLength()); i++) {
+                            Element item = (Element) itemNodes.item(i);
+                            String title = item.getElementsByTagName("title").item(0).getTextContent();
+                            String link = item.getElementsByTagName("link").item(0).getTextContent();
 
-                            String title = article.get("title").getAsString();
-                            String articleUrl = article.get("url").getAsString();
-
-                            slackMessage.append("• <").append(articleUrl).append("|").append(title).append(">\n");
-                            count++;
+                            slackMessage.append("• <").append(link).append("|").append(title).append(">\n");
                             totalNewsCount++;
                         }
                         slackMessage.append("\n");
@@ -343,13 +335,13 @@ public class App {
 
             if (totalNewsCount > 0) {
                 sendToSlack(slackMessage.toString());
-                System.out.println("✅ 총 " + totalNewsCount + "개의 카테고리별 뉴스 슬랙 전송 완료!");
+                System.out.println("✅ 구글 뉴스 총 " + totalNewsCount + "개 슬랙 전송 완료!");
             } else {
                 System.out.println("⚠️ 오늘 수집된 뉴스가 전혀 없습니다.");
             }
 
         } catch (Exception e) {
-            System.err.println("❌ 뉴스 크롤링 중 에러: " + e.getMessage());
+            System.err.println("❌ 뉴스 수집 중 에러: " + e.getMessage());
         }
     }
 }
