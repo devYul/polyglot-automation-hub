@@ -32,9 +32,9 @@ public class App {
     // Google API 관련 설정
     private static final String APPLICATION_NAME = "Jarvis-Yul-Automation";
     private static final GsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
-    private static final String TOKENS_DIRECTORY_PATH = "tokens";
+    private static final String TOKENS_DIRECTORY_PATH = "app/tokens";
     private static final List<String> SCOPES = Collections.singletonList(GmailScopes.GMAIL_READONLY);
-    private static final String CREDENTIALS_SAVE_PATH = "src/main/resources/credentials.json";
+    private static final String CREDENTIALS_FILE_PATH = "app/src/main/resources/credentials.json";
 
     public static void main(String[] args) {
         // 1. 최우선 과제: 서버 환경 변수로부터 보안 파일 복구
@@ -153,10 +153,10 @@ public class App {
 
     // --- Gmail 관련 로직 ---
     private static Gmail getGmailService() throws Exception {
-        // 복구된 파일을 직접 읽기
-        File credFile = new File(CREDENTIALS_SAVE_PATH);
+        // ⚠️ 물리적 파일 경로로 직접 읽습니다.
+        File credFile = new File(CREDENTIALS_FILE_PATH);
         if (!credFile.exists()) {
-            throw new FileNotFoundException("열쇠(credentials.json)가 없습니다. 복구 로직을 확인하세요.");
+            throw new FileNotFoundException("🔑 열쇠 파일이 없습니다: " + credFile.getAbsolutePath());
         }
 
         try (InputStream in = new FileInputStream(credFile)) {
@@ -199,12 +199,12 @@ public class App {
     // --- 보안 파일 복구 로직 ---
     private static void restoreSecrets() {
         try {
-            System.out.println("🔐 보안 파일(Credentials/Token) 복구 공정 시작...");
+            System.out.println("🔐 보안 파일 복구 시작...");
 
             // 1. credentials.json 복구
             String b64Creds = System.getenv("GMAIL_CREDENTIALS");
             if (b64Creds != null && !b64Creds.isEmpty()) {
-                File file = new File(CREDENTIALS_SAVE_PATH);
+                File file = new File(CREDENTIALS_FILE_PATH); // 👈 상수 사용
                 if (!file.getParentFile().exists())
                     file.getParentFile().mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(file)) {
@@ -224,7 +224,9 @@ public class App {
                 }
                 System.out.println("✅ StoredCredential 복구 완료!");
             }
-        } catch (Exception e) {
+        } catch (
+
+        Exception e) {
             System.err.println("⚠️ 복구 중 경고: " + e.getMessage());
         }
     }
