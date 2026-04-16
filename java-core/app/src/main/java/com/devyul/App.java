@@ -295,6 +295,7 @@ public class App {
             categories.put("BUSINESS", "📈 경제/비즈니스");
             categories.put("TECHNOLOGY", "💻 IT/기술");
             categories.put("NATION", "🌐 국내/사회");
+            categories.put("WORLD", "🌍 국제/세계");
             categories.put("ENTERTAINMENT", "🎬 엔터테인먼트");
 
             int totalNewsCount = 0;
