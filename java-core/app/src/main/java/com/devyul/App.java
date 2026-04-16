@@ -23,88 +23,159 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class App {
-    // 환경 변수들
+    // 1. 환경 변수 로드
     private static final String GITHUB_TOKEN = System.getenv("GITHUB_TOKEN");
     private static final String NOTION_TOKEN = System.getenv("NOTION_TOKEN");
     private static final String NOTION_DB_ID = System.getenv("NOTION_DB_ID");
     private static final String SLACK_WEBHOOK_URL = System.getenv("SLACK_WEBHOOK_URL");
 
-    // Google API 관련 설정
+    // 2. Google API 설정
     private static final String APPLICATION_NAME = "Jarvis-Yul-Automation";
     private static final GsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
-    private static final String TOKENS_DIRECTORY_PATH = "app/tokens";
     private static final List<String> SCOPES = Collections.singletonList(GmailScopes.GMAIL_READONLY);
-    private static final String CREDENTIALS_FILE_PATH = "app/src/main/resources/credentials.json";
+
+    // ⚠️ [중요] 경로 설정: 서버(GitHub Actions) 실행 위치에 맞게 조정
+    // java-core 폴더에서 실행되므로 app/src/... 경로를 사용합니다.
+    private static final String CREDENTIALS_PATH = "app/src/main/resources/credentials.json";
+    private static final String TOKENS_DIRECTORY = "app/tokens";
 
     public static void main(String[] args) {
-        // 1. 최우선 과제: 서버 환경 변수로부터 보안 파일 복구
+        // [STEP 1] 최우선 작업: 보안 파일 물리적 복구
         restoreSecrets();
 
         try {
             System.out.println("🚀 Jarvis-Yul 시스템 가동 중...");
 
-            // 2. Gmail 모니터링 (슬랙 알림 포함)
+            // [STEP 2] Gmail 서비스 기동 (물리 파일 직접 참조)
             System.out.println("📧 메일함을 확인하는 중...");
             Gmail gmailService = getGmailService();
-            checkNewEmails(gmailService);
-
-            // 3. GitHub 잔디 분석
-            System.out.println("🔍 오늘 날짜의 활동을 분석 중입니다...");
-            GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
-            LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
-            LocalDate fetchDate = displayDate.minusDays(1); // 전날부터의 커밋 조회
-
-            List<CommitInfo> todayCommits = new ArrayList<>();
-
-            for (GHRepository repo : github.getMyself().listRepositories()) {
-                List<GHCommit> commits = repo.queryCommits()
-                        .since(java.sql.Date.valueOf(fetchDate))
-                        .list().toList();
-
-                if (!commits.isEmpty()) {
-                    List<String> messages = commits.stream()
-                            .map(c -> {
-                                try {
-                                    return c.getCommitShortInfo().getMessage();
-                                } catch (IOException e) {
-                                    return "메시지 로드 실패";
-                                }
-                            })
-                            .collect(Collectors.toList());
-
-                    todayCommits.add(new CommitInfo(repo.getName(), messages));
-                    System.out.println("✅ [" + repo.getName() + "]에서 " + messages.size() + "개의 커밋을 확인했습니다.");
-                }
+            if (gmailService != null) {
+                checkNewEmails(gmailService);
             }
 
-            // 4. 결과 보고 (Notion 기록 및 Slack 전송)
-            if (!todayCommits.isEmpty()) {
-                // 노션 기록
-                sendToNotion(displayDate.toString(), todayCommits);
-
-                // 슬랙 성공 보고
-                String successMsg = String.format(
-                        "✅ [성공 보고] 주인님, 오늘 %d개 레포에서 잔디를 무사히 심으셨습니다! 노션에 예쁘게 박제해두었으니 확인해 보세요. 고생하셨습니다! 🚀",
-                        todayCommits.size());
-                sendToSlack(successMsg);
-            } else {
-                System.out.println("⚠️ 활동 내역 없음. Jarvis-Yul이 슬랙 경고를 시작합니다.");
-                sendToSlack("🚨 [긴급 보고] 주인님, 오늘 아직 잔디를 안 심으셨습니다! Jarvis-Yul이 지켜보고 있으니 서둘러 커밋 부탁드립니다. ㅡㅡ^");
-            }
-
-            System.out.println("🏁 모든 자동화 공정을 성공적으로 마쳤습니다.");
+            // [STEP 3] GitHub 잔디 분석
+            analyzeGitHubActivity();
 
         } catch (Exception e) {
-            System.err.println("❌ 실행 중 치명적 에러 발생: " + e.getMessage());
+            System.err.println("❌ 시스템 가동 중 치명적 에러 발생!");
             e.printStackTrace();
         }
     }
 
-    // --- 노션 관련 로직 ---
+    private static void restoreSecrets() {
+        try {
+            System.out.println("🔐 [Security] 보안 파일 복구 공정 시작...");
+
+            // 1. credentials.json 복구
+            String b64Creds = System.getenv("GMAIL_CREDENTIALS");
+            if (b64Creds != null && !b64Creds.isEmpty()) {
+                File file = new File(CREDENTIALS_PATH);
+                if (!file.getParentFile().exists())
+                    file.getParentFile().mkdirs();
+                try (FileOutputStream fos = new FileOutputStream(file)) {
+                    fos.write(Base64.getDecoder().decode(b64Creds.trim()));
+                }
+                System.out.println("✅ credentials.json 복구 성공 (" + file.getAbsolutePath() + ")");
+            }
+
+            // 2. StoredCredential 복구
+            String b64Token = System.getenv("GMAIL_TOKEN");
+            if (b64Token != null && !b64Token.isEmpty()) {
+                File tokenDir = new File(TOKENS_DIRECTORY);
+                if (!tokenDir.exists())
+                    tokenDir.mkdirs();
+                File tokenFile = new File(tokenDir, "StoredCredential");
+                try (FileOutputStream fos = new FileOutputStream(tokenFile)) {
+                    fos.write(Base64.getDecoder().decode(b64Token.trim()));
+                }
+                System.out.println("✅ 인증 토큰 복구 성공 (" + tokenFile.getAbsolutePath() + ")");
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️ 파일 복구 중 경고: " + e.getMessage());
+        }
+    }
+
+    private static Gmail getGmailService() throws Exception {
+        File credFile = new File(CREDENTIALS_PATH);
+
+        // 리소스가 아닌 실제 파일 존재 여부 확인
+        if (!credFile.exists() || credFile.length() == 0) {
+            System.err.println("❌ credentials.json 파일이 비어있거나 찾을 수 없습니다.");
+            return null;
+        }
+
+        // ⚠️ FileInputStream으로 실제 파일을 직접 읽어 파싱 에러 방지
+        try (InputStream in = new FileInputStream(credFile)) {
+            GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in));
+
+            GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
+                    GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, clientSecrets, SCOPES)
+                    .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY)))
+                    .setAccessType("offline")
+                    .build();
+
+            Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver())
+                    .authorize("user");
+
+            return new Gmail.Builder(GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, credential)
+                    .setApplicationName(APPLICATION_NAME)
+                    .build();
+        }
+    }
+
+    private static void analyzeGitHubActivity() throws Exception {
+        System.out.println("🔍 GitHub 활동 분석 중...");
+        GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
+        LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        LocalDate fetchDate = displayDate.minusDays(1);
+
+        List<CommitInfo> todayCommits = new ArrayList<>();
+
+        // .values() 제거한 정상 로직
+        for (GHRepository repo : github.getMyself().listRepositories()) {
+            List<GHCommit> commits = repo.queryCommits()
+                    .since(java.sql.Date.valueOf(fetchDate))
+                    .list().toList();
+
+            if (!commits.isEmpty()) {
+                List<String> messages = commits.stream()
+                        .map(c -> {
+                            try {
+                                return c.getCommitShortInfo().getMessage();
+                            } catch (IOException e) {
+                                return "메시지 로드 실패";
+                            }
+                        }).collect(Collectors.toList());
+
+                todayCommits.add(new CommitInfo(repo.getName(), messages));
+                System.out.println("✅ [" + repo.getName() + "] 커밋 발견!");
+            }
+        }
+
+        if (!todayCommits.isEmpty()) {
+            sendToNotion(displayDate.toString(), todayCommits);
+            sendToSlack("✅ [보고] 주인님, 오늘 " + todayCommits.size() + "개의 잔디를 심으셨습니다! 노션 업데이트 완료. 🚀");
+        } else {
+            sendToSlack("🚨 [경고] 주인님, 오늘 잔디가 비어있습니다! ㅡㅡ^");
+        }
+    }
+
+    private static void checkNewEmails(Gmail service) throws IOException {
+        ListMessagesResponse response = service.users().messages().list("me")
+                .setQ("is:unread").setMaxResults(3L).execute();
+
+        List<Message> messages = response.getMessages();
+        if (messages != null) {
+            for (Message m : messages) {
+                Message full = service.users().messages().get("me", m.getId()).execute();
+                sendToSlack("📬 [메일 알림] " + full.getSnippet());
+            }
+        }
+    }
+
     private static void sendToNotion(String date, List<CommitInfo> commitInfos) throws IOException {
         OkHttpClient client = new OkHttpClient();
         JsonObject json = new JsonObject();
-
         JsonObject parent = new JsonObject();
         parent.addProperty("database_id", NOTION_DB_ID);
         json.add("parent", parent);
@@ -112,8 +183,8 @@ public class App {
         JsonObject props = new JsonObject();
         props.add("제목", createTitle(date + " 활동 보고"));
 
-        List<String> repoNameList = commitInfos.stream().map(i -> i.repoName).collect(Collectors.toList());
-        props.add("레포지토리", createMultiSelect(repoNameList));
+        List<String> repoNames = commitInfos.stream().map(i -> i.repoName).collect(Collectors.toList());
+        props.add("레포지토리", createMultiSelect(repoNames));
 
         String allMessages = commitInfos.stream()
                 .map(i -> "[" + i.repoName + "]\n- " + String.join("\n- ", i.messages))
@@ -132,10 +203,8 @@ public class App {
 
         json.add("properties", props);
 
-        RequestBody body = RequestBody.create(
-                new Gson().toJson(json),
+        RequestBody body = RequestBody.create(new Gson().toJson(json),
                 MediaType.get("application/json; charset=utf-8"));
-
         Request request = new Request.Builder()
                 .url("https://api.notion.com/v1/pages")
                 .addHeader("Authorization", "Bearer " + NOTION_TOKEN)
@@ -143,164 +212,73 @@ public class App {
                 .post(body).build();
 
         try (Response response = client.newCall(request).execute()) {
-            if (response.isSuccessful()) {
-                System.out.println("✨ 노션 데이터베이스 업데이트 성공!");
-            } else {
-                System.err.println("❌ 노션 전송 실패: " + response.body().string());
-            }
+            if (response.isSuccessful())
+                System.out.println("✨ 노션 업데이트 성공!");
+            else
+                System.err.println("❌ 노션 에러: " + response.body().string());
         }
     }
 
-    // --- Gmail 관련 로직 ---
-    private static Gmail getGmailService() throws Exception {
-        // ⚠️ 물리적 파일 경로로 직접 읽습니다.
-        File credFile = new File(CREDENTIALS_FILE_PATH);
-        if (!credFile.exists()) {
-            throw new FileNotFoundException("🔑 열쇠 파일이 없습니다: " + credFile.getAbsolutePath());
-        }
-
-        try (InputStream in = new FileInputStream(credFile)) {
-            GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in));
-
-            GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
-                    GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, clientSecrets, SCOPES)
-                    .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY_PATH)))
-                    .setAccessType("offline")
-                    .build();
-
-            Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver())
-                    .authorize("user");
-
-            return new Gmail.Builder(GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, credential)
-                    .setApplicationName(APPLICATION_NAME)
-                    .build();
-        }
-    }
-
-    private static void checkNewEmails(Gmail service) throws IOException {
-        ListMessagesResponse response = service.users().messages().list("me")
-                .setQ("is:unread")
-                .setMaxResults(3L)
-                .execute();
-
-        List<Message> messages = response.getMessages();
-        if (messages != null && !messages.isEmpty()) {
-            for (Message message : messages) {
-                Message fullMessage = service.users().messages().get("me", message.getId()).execute();
-                String snippet = fullMessage.getSnippet();
-                System.out.println("📬 새 메일 발견: " + snippet);
-                sendToSlack("📬 [메일 알림] 주인님, 새 메일이 도착했습니다!\n> " + snippet);
-            }
-        } else {
-            System.out.println("✅ 새로운 메일이 없습니다.");
-        }
-    }
-
-    // --- 보안 파일 복구 로직 ---
-    private static void restoreSecrets() {
-        try {
-            System.out.println("🔐 보안 파일 복구 시작...");
-
-            // 1. credentials.json 복구
-            String b64Creds = System.getenv("GMAIL_CREDENTIALS");
-            if (b64Creds != null && !b64Creds.isEmpty()) {
-                File file = new File(CREDENTIALS_FILE_PATH); // 👈 상수 사용
-                if (!file.getParentFile().exists())
-                    file.getParentFile().mkdirs();
-                try (FileOutputStream fos = new FileOutputStream(file)) {
-                    fos.write(Base64.getDecoder().decode(b64Creds.trim()));
-                }
-                System.out.println("✅ credentials.json 복구 완료!");
-            }
-
-            // 2. StoredCredential 복구
-            String b64Token = System.getenv("GMAIL_TOKEN");
-            if (b64Token != null && !b64Token.isEmpty()) {
-                File tokenDir = new File(TOKENS_DIRECTORY_PATH);
-                if (!tokenDir.exists())
-                    tokenDir.mkdirs();
-                try (FileOutputStream fos = new FileOutputStream(new File(tokenDir, "StoredCredential"))) {
-                    fos.write(Base64.getDecoder().decode(b64Token.trim()));
-                }
-                System.out.println("✅ StoredCredential 복구 완료!");
-            }
-        } catch (
-
-        Exception e) {
-            System.err.println("⚠️ 복구 중 경고: " + e.getMessage());
-        }
-    }
-
-    // --- 슬랙 전송 로직 ---
-    private static void sendToSlack(String message) throws IOException {
-        if (SLACK_WEBHOOK_URL == null || SLACK_WEBHOOK_URL.isEmpty())
-            return;
-
-        OkHttpClient client = new OkHttpClient();
-        JsonObject json = new JsonObject();
-        json.addProperty("text", message);
-
-        RequestBody body = RequestBody.create(
-                new Gson().toJson(json),
-                MediaType.get("application/json; charset=utf-8"));
-
-        Request request = new Request.Builder()
-                .url(SLACK_WEBHOOK_URL)
-                .post(body)
-                .build();
-
-        try (Response response = client.newCall(request).execute()) {
-            if (response.isSuccessful()) {
-                System.out.println("🔔 슬랙 보고 완료.");
-            }
-        }
-    }
-
-    // --- 유틸리티 메서드들 ---
+    // --- 유틸리티 메서드 (JSON 생성) ---
     private static JsonObject createTitle(String text) {
-        JsonObject wrapper = new JsonObject();
-        JsonArray array = new JsonArray();
-        JsonObject textObj = new JsonObject();
-        JsonObject content = new JsonObject();
-        content.addProperty("content", text);
-        textObj.add("text", content);
-        array.add(textObj);
-        wrapper.add("title", array);
-        return wrapper;
+        JsonObject w = new JsonObject();
+        JsonArray a = new JsonArray();
+        JsonObject t = new JsonObject();
+        JsonObject c = new JsonObject();
+        c.addProperty("content", text);
+        t.add("text", c);
+        a.add(t);
+        w.add("title", a);
+        return w;
     }
 
     private static JsonObject createText(String text) {
-        JsonObject wrapper = new JsonObject();
-        JsonArray array = new JsonArray();
-        JsonObject textObj = new JsonObject();
-        JsonObject content = new JsonObject();
-        content.addProperty("content", text);
-        textObj.add("text", content);
-        array.add(textObj);
-        wrapper.add("rich_text", array);
-        return wrapper;
+        JsonObject w = new JsonObject();
+        JsonArray a = new JsonArray();
+        JsonObject t = new JsonObject();
+        JsonObject c = new JsonObject();
+        c.addProperty("content", text);
+        t.add("text", c);
+        a.add(t);
+        w.add("rich_text", a);
+        return w;
     }
 
     private static JsonObject createMultiSelect(List<String> names) {
-        JsonObject wrapper = new JsonObject();
-        JsonArray array = new JsonArray();
-        for (String name : names) {
-            JsonObject obj = new JsonObject();
-            obj.addProperty("name", name);
-            array.add(obj);
+        JsonObject w = new JsonObject();
+        JsonArray a = new JsonArray();
+        for (String n : names) {
+            JsonObject o = new JsonObject();
+            o.addProperty("name", n);
+            a.add(o);
         }
-        wrapper.add("multi_select", array);
-        return wrapper;
+        w.add("multi_select", a);
+        return w;
     }
 
-    // --- 데이터 모델 클래스 ---
+    private static void sendToSlack(String message) {
+        if (SLACK_WEBHOOK_URL == null)
+            return;
+        try {
+            OkHttpClient client = new OkHttpClient();
+            JsonObject json = new JsonObject();
+            json.addProperty("text", message);
+            RequestBody body = RequestBody.create(new Gson().toJson(json),
+                    MediaType.get("application/json; charset=utf-8"));
+            Request request = new Request.Builder().url(SLACK_WEBHOOK_URL).post(body).build();
+            client.newCall(request).execute().close();
+        } catch (Exception e) {
+            System.err.println("Slack 전송 실패");
+        }
+    }
+
     private static class CommitInfo {
         String repoName;
         List<String> messages;
 
-        CommitInfo(String repoName, List<String> messages) {
-            this.repoName = repoName;
-            this.messages = messages;
+        CommitInfo(String r, List<String> m) {
+            this.repoName = r;
+            this.messages = m;
         }
     }
 }
