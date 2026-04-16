@@ -286,7 +286,6 @@ public class App {
             StringBuilder slackMessage = new StringBuilder();
             slackMessage.append("📰 *[자비스 모닝 종합 브리핑]*\n\n");
 
-            // 1. 5대 관심 분야 셋업 (NewsAPI 공식 지원 카테고리)
             Map<String, String> categories = new LinkedHashMap<>();
             categories.put("business", "📈 경제/비즈니스");
             categories.put("technology", "💻 IT/기술");
@@ -296,7 +295,6 @@ public class App {
 
             int totalNewsCount = 0;
 
-            // 2. 카테고리별로 API를 찔러서 뉴스 긁어오기
             for (Map.Entry<String, String> entry : categories.entrySet()) {
                 String cat = entry.getKey();
                 String catName = entry.getValue();
@@ -305,23 +303,28 @@ public class App {
                 Request request = new Request.Builder().url(url).build();
 
                 try (Response response = client.newCall(request).execute()) {
+                    // ⚠️ [디버그] 성공/실패 상관없이 API가 보낸 원본 메시지를 무조건 까봅니다!
+                    String responseBody = response.body().string();
+
                     if (!response.isSuccessful()) {
-                        System.err.println("❌ " + catName + " 뉴스 호출 실패: " + response.code());
+                        System.out.println(
+                                "❌ [" + catName + "] API 차단됨! 상태코드: " + response.code() + ", 응답: " + responseBody);
                         continue;
                     }
 
-                    String responseBody = response.body().string();
+                    // ⚠️ [디버그] 정상 응답이라도 안에 데이터가 비어있는지 눈으로 확인합니다.
+                    System.out.println("📡 [" + catName + "] API 원본: "
+                            + responseBody.substring(0, Math.min(200, responseBody.length())) + "... (생략)");
+
                     JsonObject jsonObject = JsonParser.parseString(responseBody).getAsJsonObject();
                     JsonArray articles = jsonObject.getAsJsonArray("articles");
 
-                    // 해당 카테고리에 뉴스가 있으면 슬랙 메시지에 추가
                     if (articles != null && articles.size() > 0) {
                         slackMessage.append("*").append(catName).append("*\n");
                         int count = 0;
                         for (JsonElement element : articles) {
                             if (count >= 2)
-                                break; // 각 분야별 딱 상위 2개씩만 픽업!
-
+                                break;
                             JsonObject article = element.getAsJsonObject();
                             if (!article.has("title") || article.get("title").isJsonNull())
                                 continue;
@@ -333,12 +336,11 @@ public class App {
                             count++;
                             totalNewsCount++;
                         }
-                        slackMessage.append("\n"); // 분야 간 띄어쓰기
+                        slackMessage.append("\n");
                     }
                 }
             }
 
-            // 3. 수집된 뉴스가 하나라도 있으면 슬랙 전송!
             if (totalNewsCount > 0) {
                 sendToSlack(slackMessage.toString());
                 System.out.println("✅ 총 " + totalNewsCount + "개의 카테고리별 뉴스 슬랙 전송 완료!");
@@ -347,7 +349,7 @@ public class App {
             }
 
         } catch (Exception e) {
-            System.err.println("❌ 뉴스 크롤링 중 치명적 에러: " + e.getMessage());
+            System.err.println("❌ 뉴스 크롤링 중 에러: " + e.getMessage());
         }
     }
 }
