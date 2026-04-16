@@ -17,6 +17,7 @@ import com.google.api.services.gmail.model.ListMessagesResponse;
 import com.google.api.services.gmail.model.Message;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
@@ -32,30 +33,28 @@ public class App {
     private static final GsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
     private static final List<String> SCOPES = Collections.singletonList(GmailScopes.GMAIL_READONLY);
 
-    // ⚠️ [경로 단순화] src 폴더 깊숙이 들어가지 않고 실행 루트에 생성합니다.
-    private static final String CREDENTIALS_FILE = "credentials.json";
     private static final String TOKENS_DIRECTORY = "tokens";
 
     public static void main(String[] args) {
         try {
             System.out.println("🚀 Jarvis-Yul 시스템 가동 준비...");
 
-            // 1. 파일 복구가 끝날 때까지 대기하고 성공 여부를 반환받음
-            if (!restoreSecrets()) {
-                System.err.println("❌ 보안 파일 복구 실패. 시스템을 종료합니다.");
+            // 토큰만 물리 파일로 복구합니다.
+            if (!restoreToken()) {
+                System.err.println("❌ 인증 토큰 복구 실패. 시스템을 종료합니다.");
                 return;
             }
 
             System.out.println("🚀 Jarvis-Yul 시스템 가동 중...");
 
-            // 2. Gmail 서비스 기동
+            // Gmail 서비스 실행 (파일 I/O 제거, 메모리 직접 로드)
             Gmail gmailService = getGmailService();
             if (gmailService != null) {
                 System.out.println("📧 메일함을 확인하는 중...");
                 checkNewEmails(gmailService);
             }
 
-            // 3. GitHub & Notion 자동화
+            // GitHub & Notion 실행
             runDailyAutomation();
 
             System.out.println("🏁 모든 자동화 보고가 완료되었습니다.");
@@ -66,26 +65,12 @@ public class App {
         }
     }
 
-    private static boolean restoreSecrets() {
+    // ⚠️ 변경점 1: credentials.json 물리 파일을 아예 만들지 않습니다.
+    private static boolean restoreToken() {
         try {
-            System.out.println("🔐 [Security] 보안 파일 복구 시작...");
-
-            // (1) credentials.json 복구
-            String b64Creds = System.getenv("GMAIL_CREDENTIALS");
-            if (b64Creds == null || b64Creds.isEmpty()) {
-                System.err.println("⚠️ GMAIL_CREDENTIALS 시크릿을 찾을 수 없습니다.");
-            } else {
-                File file = new File(CREDENTIALS_FILE);
-                try (FileOutputStream fos = new FileOutputStream(file)) {
-                    fos.write(Base64.getDecoder().decode(b64Creds.trim()));
-                    fos.flush(); // 데이터를 확실히 밀어넣음
-                }
-                System.out.println("✅ credentials.json 생성 완료! (크기: " + file.length() + " bytes)");
-            }
-
-            // (2) StoredCredential 복구
+            System.out.println("🔐 [Security] 인증 토큰 파일 복구 시작...");
             String b64Token = System.getenv("GMAIL_TOKEN");
-            if (b64Token != null && !b64Token.isEmpty()) {
+            if (b64Token != null && !b64Token.trim().isEmpty()) {
                 File tokenDir = new File(TOKENS_DIRECTORY);
                 if (!tokenDir.exists())
                     tokenDir.mkdirs();
@@ -94,35 +79,58 @@ public class App {
                     fos.write(Base64.getDecoder().decode(b64Token.trim()));
                     fos.flush();
                 }
-                System.out.println("✅ StoredCredential 생성 완료!");
+                System.out.println("✅ StoredCredential (토큰) 복구 완료!");
+                return true;
+            } else {
+                System.err.println("⚠️ GMAIL_TOKEN 시크릿이 없습니다.");
+                return false;
             }
-            return true;
         } catch (Exception e) {
-            System.err.println("❌ 복구 중 치명적 에러: " + e.getMessage());
+            System.err.println("❌ 토큰 복구 중 에러: " + e.getMessage());
             return false;
         }
     }
 
+    // ⚠️ 변경점 2: 인코딩 자동 감지 및 JSON 직접 파싱 (가장 강력한 보호 조치)
     private static Gmail getGmailService() throws Exception {
-        File credFile = new File(CREDENTIALS_FILE);
-        if (!credFile.exists() || credFile.length() == 0) {
-            System.err.println("❌ credentials.json 파일이 존재하지 않거나 비어있습니다.");
-            return null;
+        String b64Creds = System.getenv("GMAIL_CREDENTIALS");
+        if (b64Creds == null || b64Creds.trim().isEmpty()) {
+            throw new Exception("❌ GMAIL_CREDENTIALS 시크릿이 존재하지 않습니다.");
         }
 
-        try (InputStream in = new FileInputStream(credFile)) {
-            GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in));
-            GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
-                    GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, clientSecrets, SCOPES)
-                    .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY)))
-                    .setAccessType("offline")
-                    .build();
+        byte[] decodedCreds = Base64.getDecoder().decode(b64Creds.trim());
+        String jsonString;
 
-            Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver())
-                    .authorize("user");
-            return new Gmail.Builder(GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, credential)
-                    .setApplicationName(APPLICATION_NAME).build();
+        // PowerShell에서 넘어온 UTF-16LE, UTF-16BE 인코딩을 자동 감지하여 정상적인 문자열로 강제 복구
+        if (decodedCreds.length >= 2 && decodedCreds[0] == (byte) 0xFF && decodedCreds[1] == (byte) 0xFE) {
+            jsonString = new String(decodedCreds, StandardCharsets.UTF_16LE);
+        } else if (decodedCreds.length >= 2 && decodedCreds[0] == (byte) 0xFE && decodedCreds[1] == (byte) 0xFF) {
+            jsonString = new String(decodedCreds, StandardCharsets.UTF_16BE);
+        } else {
+            jsonString = new String(decodedCreds, StandardCharsets.UTF_8);
         }
+
+        // 구글 JSON 파서를 미치게 만드는 숨겨진 BOM(\uFEFF) 문자 및 공백 완벽 제거
+        jsonString = jsonString.replace("\uFEFF", "").trim();
+
+        // 그럼에도 JSON이 아니라면, 정확히 어떤 쓰레기값이 들어갔는지 로그에 찍도록 명시
+        if (!jsonString.startsWith("{")) {
+            throw new Exception("❌ 해독된 문자열이 JSON 형식('{')으로 시작하지 않습니다. 첫 10글자: [" +
+                    jsonString.substring(0, Math.min(10, jsonString.length())) + "]");
+        }
+
+        // 물리 파일 경로를 버리고, 깨끗하게 정제된 문자열(메모리)을 구글 인증 객체에 직접 주입합니다.
+        GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new StringReader(jsonString));
+
+        GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
+                GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, clientSecrets, SCOPES)
+                .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY)))
+                .setAccessType("offline")
+                .build();
+
+        Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver()).authorize("user");
+        return new Gmail.Builder(GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, credential)
+                .setApplicationName(APPLICATION_NAME).build();
     }
 
     // --- GitHub, Notion, Slack 로직 (이전과 동일) ---
