@@ -320,7 +320,7 @@ public class App {
                     if (itemNodes.getLength() > 0) {
                         slackMessage.append("*").append(catName).append("*\n");
                         // 상위 2개 뉴스만 추출
-                        for (int i = 0; i < Math.min(2, itemNodes.getLength()); i++) {
+                        for (int i = 0; i < Math.min(5, itemNodes.getLength()); i++) {
                             Element item = (Element) itemNodes.item(i);
                             String title = item.getElementsByTagName("title").item(0).getTextContent();
                             String link = item.getElementsByTagName("link").item(0).getTextContent();
