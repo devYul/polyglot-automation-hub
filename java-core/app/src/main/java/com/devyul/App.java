@@ -273,59 +273,79 @@ public class App {
     }
 
     private static void getHeadlineNews() {
-        System.out.println("📰 오늘의 헤드라인 뉴스 수집 중...");
+        System.out.println("📰 카테고리별 헤드라인 뉴스 수집 중...");
 
-        if (NEWS_API_KEY == null || NEWS_API_KEY.isEmpty()) {
+        String apiKey = System.getenv("NEWS_API_KEY");
+        if (apiKey == null || apiKey.trim().isEmpty()) {
             System.err.println("⚠️ NEWS_API_KEY가 없어 뉴스 브리핑을 건너뜁니다.");
             return;
         }
 
         try {
             OkHttpClient client = new OkHttpClient();
-            // country=kr (한국), category=business (경제)
-            String url = "https://newsapi.org/v2/top-headlines?country=kr&category=business&apiKey=" + NEWS_API_KEY;
+            StringBuilder slackMessage = new StringBuilder();
+            slackMessage.append("📰 *[자비스 모닝 종합 브리핑]*\n\n");
 
-            Request request = new Request.Builder().url(url).build();
+            // 1. 5대 관심 분야 셋업 (NewsAPI 공식 지원 카테고리)
+            Map<String, String> categories = new LinkedHashMap<>();
+            categories.put("business", "📈 경제/비즈니스");
+            categories.put("technology", "💻 IT/기술");
+            categories.put("general", "🌐 사회/일반");
+            categories.put("science", "🔬 과학");
+            categories.put("entertainment", "🎬 엔터테인먼트");
 
-            try (Response response = client.newCall(request).execute()) {
-                if (!response.isSuccessful()) {
-                    System.err.println("❌ 뉴스 API 호출 실패: " + response.code());
-                    return;
-                }
+            int totalNewsCount = 0;
 
-                String responseBody = response.body().string();
-                JsonObject jsonObject = JsonParser.parseString(responseBody).getAsJsonObject();
-                JsonArray articles = jsonObject.getAsJsonArray("articles");
+            // 2. 카테고리별로 API를 찔러서 뉴스 긁어오기
+            for (Map.Entry<String, String> entry : categories.entrySet()) {
+                String cat = entry.getKey();
+                String catName = entry.getValue();
 
-                StringBuilder slackMessage = new StringBuilder();
-                slackMessage.append("📰 *[자비스 모닝 브리핑] 오늘의 주요 경제 뉴스*\n\n");
+                String url = "https://newsapi.org/v2/top-headlines?country=kr&category=" + cat + "&apiKey=" + apiKey;
+                Request request = new Request.Builder().url(url).build();
 
-                int count = 0;
-                for (JsonElement element : articles) {
-                    if (count >= 3)
-                        break; // 너무 길어지지 않게 딱 3개만!
-
-                    JsonObject article = element.getAsJsonObject();
-                    // API 특성상 제목이나 URL이 null일 수 있으므로 방어 로직
-                    if (!article.has("title") || article.get("title").isJsonNull())
+                try (Response response = client.newCall(request).execute()) {
+                    if (!response.isSuccessful()) {
+                        System.err.println("❌ " + catName + " 뉴스 호출 실패: " + response.code());
                         continue;
+                    }
 
-                    String title = article.get("title").getAsString();
-                    String articleUrl = article.get("url").getAsString();
+                    String responseBody = response.body().string();
+                    JsonObject jsonObject = JsonParser.parseString(responseBody).getAsJsonObject();
+                    JsonArray articles = jsonObject.getAsJsonArray("articles");
 
-                    // 슬랙 하이퍼링크 포맷: <URL|텍스트>
-                    slackMessage.append("• <").append(articleUrl).append("|").append(title).append(">\n");
-                    count++;
-                }
+                    // 해당 카테고리에 뉴스가 있으면 슬랙 메시지에 추가
+                    if (articles != null && articles.size() > 0) {
+                        slackMessage.append("*").append(catName).append("*\n");
+                        int count = 0;
+                        for (JsonElement element : articles) {
+                            if (count >= 2)
+                                break; // 각 분야별 딱 상위 2개씩만 픽업!
 
-                // 슬랙 전송 (기존에 만들어둔 sendToSlack 메서드 재활용!)
-                if (count > 0) {
-                    sendToSlack(slackMessage.toString());
-                    System.out.println("✅ 뉴스 브리핑 슬랙 전송 완료!");
-                } else {
-                    System.out.println("⚠️ 오늘 가져올 만한 뉴스가 없습니다.");
+                            JsonObject article = element.getAsJsonObject();
+                            if (!article.has("title") || article.get("title").isJsonNull())
+                                continue;
+
+                            String title = article.get("title").getAsString();
+                            String articleUrl = article.get("url").getAsString();
+
+                            slackMessage.append("• <").append(articleUrl).append("|").append(title).append(">\n");
+                            count++;
+                            totalNewsCount++;
+                        }
+                        slackMessage.append("\n"); // 분야 간 띄어쓰기
+                    }
                 }
             }
+
+            // 3. 수집된 뉴스가 하나라도 있으면 슬랙 전송!
+            if (totalNewsCount > 0) {
+                sendToSlack(slackMessage.toString());
+                System.out.println("✅ 총 " + totalNewsCount + "개의 카테고리별 뉴스 슬랙 전송 완료!");
+            } else {
+                System.out.println("⚠️ 오늘 수집된 뉴스가 전혀 없습니다.");
+            }
+
         } catch (Exception e) {
             System.err.println("❌ 뉴스 크롤링 중 치명적 에러: " + e.getMessage());
         }
