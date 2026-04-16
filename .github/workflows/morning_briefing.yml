@@ -1,0 +1,33 @@
+name: Jarvis-Yul Morning Briefing
+
+on:
+  schedule:
+    # 한국 시간(KST) 오전 8시는 UTC 전날 23:00입니다.
+    - cron: '0 23 * * *'
+  workflow_dispatch: # 수동 실행 버튼
+
+jobs:
+  run-java:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x java-core/gradlew
+
+      - name: Run Morning Task
+        working-directory: java-core
+        run: ./gradlew run --args='NEWS' # 'NEWS' 인수 전달
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GMAIL_CREDENTIALS: ${{ secrets.GMAIL_CREDENTIALS }}
+          GMAIL_TOKEN: ${{ secrets.GMAIL_TOKEN }}

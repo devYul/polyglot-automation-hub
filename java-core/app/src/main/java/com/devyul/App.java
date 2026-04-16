@@ -43,32 +43,37 @@ public class App {
     private static final String TOKENS_DIRECTORY = "tokens";
 
     public static void main(String[] args) {
+        // 실행 인수를 확인합니다. (없으면 ALL로 간주)
+        String task = (args.length > 0) ? args[0].toUpperCase() : "ALL";
         try {
-            System.out.println("🚀 Jarvis-Yul 시스템 가동 준비...");
+            System.out.println("🚀 Jarvis-Yul 시스템 가동 준비... (Task: " + task + ")");
 
-            // 토큰만 물리 파일로 복구합니다.
-            if (!restoreToken()) {
-                System.err.println("❌ 인증 토큰 복구 실패. 시스템을 종료합니다.");
+            // [공통] 보안 파일 복구는 무조건 1순위
+            if (!restoreToken())
                 return;
-            }
 
-            // Gmail 서비스 실행 (파일 I/O 제거, 메모리 직접 로드)
+            // [공통] Gmail 확인은 어느 배치에서든 수행 (원치 않으시면 분기 안으로 이동 가능)
             Gmail gmailService = getGmailService();
             if (gmailService != null) {
-                System.out.println("📧 메일함을 확인하는 중...");
                 checkNewEmails(gmailService);
             }
 
-            // 📰 뉴스 브리핑 실행 (여기 추가!)
-            getHeadlineNews();
+            // --- 인수에 따른 업무 분담 ---
 
-            // GitHub & Notion 실행
-            runDailyAutomation();
+            // 아침 업무: 뉴스 브리핑
+            if (task.equals("NEWS") || task.equals("ALL")) {
+                getHeadlineNews();
+            }
 
-            System.out.println("🏁 모든 자동화 보고가 완료되었습니다.");
+            // 밤 업무: GitHub 잔디 분석 및 노션 기록
+            if (task.equals("COMMIT") || task.equals("ALL")) {
+                runDailyAutomation();
+            }
+
+            System.out.println("🏁 [" + task + "] 임무가 완료되었습니다.");
 
         } catch (Exception e) {
-            System.err.println("❌ 시스템 실행 중 치명적 에러 발생!");
+            System.err.println("❌ 시스템 가동 중 치명적 에러 발생!");
             e.printStackTrace();
         }
     }
