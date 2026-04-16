@@ -56,7 +56,7 @@ public class App {
 
             List<CommitInfo> todayCommits = new ArrayList<>();
 
-            for (GHRepository repo : github.getMyself().listRepositories().values()) {
+            for (GHRepository repo : github.getMyself().listRepositories()) {
                 List<GHCommit> commits = repo.queryCommits()
                         .since(java.sql.Date.valueOf(fetchDate))
                         .list().toList();
