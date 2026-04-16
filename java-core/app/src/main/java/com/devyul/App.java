@@ -36,6 +36,7 @@ public class App {
     private static final String CREDENTIALS_FILE_PATH = "/credentials.json";
 
     public static void main(String[] args) {
+        restoreSecrets();
         try {
             System.out.println("🚀 Jarvis-Yul 시스템 가동 중...");
 
@@ -284,6 +285,44 @@ public class App {
             }
         } else {
             System.out.println("✅ 확인된 새 메일이 없습니다.");
+        }
+    }
+
+    private static void restoreSecrets() {
+        try {
+            System.out.println("🔐 서버 환경 환경 변수 확인 및 파일 복구 시작...");
+
+            // 1. credentials.json 복구
+            String base64Credentials = System.getenv("GMAIL_CREDENTIALS");
+            if (base64Credentials != null && !base64Credentials.isEmpty()) {
+                // resources 폴더 경로 (app/src/main/resources)
+                File resDir = new File("src/main/resources");
+                if (!resDir.exists())
+                    resDir.mkdirs();
+
+                byte[] decoded = Base64.getDecoder().decode(base64Credentials.trim());
+                try (FileOutputStream fos = new FileOutputStream(new File(resDir, "credentials.json"))) {
+                    fos.write(decoded);
+                }
+                System.out.println("✅ credentials.json 복구 완료!");
+            }
+
+            // 2. StoredCredential(토큰) 복구
+            String base64Token = System.getenv("GMAIL_TOKEN");
+            if (base64Token != null && !base64Token.isEmpty()) {
+                // tokens 폴더 경로 (app/tokens)
+                File tokenDir = new File("tokens");
+                if (!tokenDir.exists())
+                    tokenDir.mkdirs();
+
+                byte[] decodedBytes = Base64.getDecoder().decode(base64Token.trim());
+                try (FileOutputStream fos = new FileOutputStream(new File(tokenDir, "StoredCredential"))) {
+                    fos.write(decodedBytes);
+                }
+                System.out.println("✅ StoredCredential 복구 완료!");
+            }
+        } catch (Exception e) {
+            System.err.println("❌ 파일 복구 중 에러 발생: " + e.getMessage());
         }
     }
 }
