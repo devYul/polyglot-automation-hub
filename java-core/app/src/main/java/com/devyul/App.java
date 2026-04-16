@@ -35,6 +35,8 @@ public class App {
 
     private static final String TOKENS_DIRECTORY = "tokens";
 
+    private static final String NEWS_API_KEY = System.getenv("NEWS_API_KEY");
+
     public static void main(String[] args) {
         try {
             System.out.println("🚀 Jarvis-Yul 시스템 가동 준비...");
@@ -45,14 +47,15 @@ public class App {
                 return;
             }
 
-            System.out.println("🚀 Jarvis-Yul 시스템 가동 중...");
-
             // Gmail 서비스 실행 (파일 I/O 제거, 메모리 직접 로드)
             Gmail gmailService = getGmailService();
             if (gmailService != null) {
                 System.out.println("📧 메일함을 확인하는 중...");
                 checkNewEmails(gmailService);
             }
+
+            // 📰 뉴스 브리핑 실행 (여기 추가!)
+            getHeadlineNews();
 
             // GitHub & Notion 실행
             runDailyAutomation();
@@ -266,6 +269,65 @@ public class App {
         CommitInfo(String r, List<String> m) {
             this.repoName = r;
             this.messages = m;
+        }
+    }
+
+    private static void getHeadlineNews() {
+        System.out.println("📰 오늘의 헤드라인 뉴스 수집 중...");
+
+        if (NEWS_API_KEY == null || NEWS_API_KEY.isEmpty()) {
+            System.err.println("⚠️ NEWS_API_KEY가 없어 뉴스 브리핑을 건너뜁니다.");
+            return;
+        }
+
+        try {
+            OkHttpClient client = new OkHttpClient();
+            // country=kr (한국), category=business (경제)
+            String url = "https://newsapi.org/v2/top-headlines?country=kr&category=business&apiKey=" + NEWS_API_KEY;
+
+            Request request = new Request.Builder().url(url).build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    System.err.println("❌ 뉴스 API 호출 실패: " + response.code());
+                    return;
+                }
+
+                String responseBody = response.body().string();
+                JsonObject jsonObject = JsonParser.parseString(responseBody).getAsJsonObject();
+                JsonArray articles = jsonObject.getAsJsonArray("articles");
+
+                StringBuilder slackMessage = new StringBuilder();
+                slackMessage.append("📰 *[자비스 모닝 브리핑] 오늘의 주요 경제 뉴스*\n\n");
+
+                int count = 0;
+                for (JsonElement element : articles) {
+                    if (count >= 3)
+                        break; // 너무 길어지지 않게 딱 3개만!
+
+                    JsonObject article = element.getAsJsonObject();
+                    // API 특성상 제목이나 URL이 null일 수 있으므로 방어 로직
+                    if (!article.has("title") || article.get("title").isJsonNull())
+                        continue;
+
+                    String title = article.get("title").getAsString();
+                    String articleUrl = article.get("url").getAsString();
+
+                    // 슬랙 하이퍼링크 포맷: <URL|텍스트>
+                    slackMessage.append("• <").append(articleUrl).append("|").append(title).append(">\n");
+                    count++;
+                }
+
+                // 슬랙 전송 (기존에 만들어둔 sendToSlack 메서드 재활용!)
+                if (count > 0) {
+                    sendToSlack(slackMessage.toString());
+                    System.out.println("✅ 뉴스 브리핑 슬랙 전송 완료!");
+                } else {
+                    System.out.println("⚠️ 오늘 가져올 만한 뉴스가 없습니다.");
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("❌ 뉴스 크롤링 중 치명적 에러: " + e.getMessage());
         }
     }
 }
