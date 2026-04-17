@@ -126,7 +126,7 @@ public class App {
             sendRichSlackMessage("📈 *[자비스 주식 스나이퍼 브리핑]*", attachments);
     }
 
-    // --- 뉴스 브리핑 ---
+    // --- 뉴스 RSS 브리핑 ---
     private static void getHeadlineNews() {
         try {
             OkHttpClient client = new OkHttpClient();
@@ -163,9 +163,9 @@ public class App {
         }
     }
 
-    // --- 🔐 GitHub 잔디 분석 (당일 기준 + 1커밋 1로우) ---
+    // --- 🔐 GitHub 잔디 분석 (시간순 정렬 정밀 타격) ---
     private static void runDailyAutomation() {
-        System.out.println("🔍 GitHub 활동 분석 중...");
+        System.out.println("🔍 GitHub 활동 분석 및 시간순 정렬 중...");
         if (GITHUB_TOKEN == null || GITHUB_TOKEN.isEmpty())
             return;
 
@@ -173,82 +173,98 @@ public class App {
             GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
             GHMyself myself = github.getMyself();
             LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
-
-            // ⚠️ 수정: '오늘 00:00' 이후의 커밋만 가져오도록 엄격하게 제한
             Date sinceDate = java.sql.Date.valueOf(today);
 
-            List<CommitInfo> todayCommits = new ArrayList<>();
-            int totalCommitCount = 0;
+            // 1. 모든 레포지토리에서 오늘 발생한 커밋을 일단 싹 다 긁어모읍니다.
+            List<RawCommitData> allRawCommits = new ArrayList<>();
 
             for (GHRepository repo : myself.listRepositories()) {
                 List<GHCommit> commits = repo.queryCommits().since(sinceDate).list().toList();
-
-                if (!commits.isEmpty()) {
-                    List<String> messages = new ArrayList<>();
-                    for (GHCommit commit : commits) {
-                        String msg = commit.getCommitShortInfo().getMessage();
-                        messages.add(msg);
-                        totalCommitCount++;
-
-                        // ⚠️ 수정: 커밋 한 개당 노션 로우 한 개 생성
-                        sendToNotionSingle(today.toString(), repo.getName(), msg);
-                    }
-                    todayCommits.add(new CommitInfo(repo.getName(), messages));
+                for (GHCommit commit : commits) {
+                    allRawCommits.add(new RawCommitData(
+                            repo.getName(),
+                            commit.getCommitShortInfo().getMessage(),
+                            commit.getSHA1(),
+                            commit.getCommitShortInfo().getAuthoredDate()));
                 }
             }
 
-            if (totalCommitCount > 0) {
-                StringBuilder slackBody = new StringBuilder();
-                for (CommitInfo info : todayCommits) {
-                    slackBody.append("*[").append(info.repoName).append("]* (").append(info.messages.size())
-                            .append("회)\n");
-                    for (String msg : info.messages) {
-                        slackBody.append("- ").append(msg).append("\n");
-                    }
-                    slackBody.append("\n");
-                }
+            // 2. ⚠️ 핵심: 커밋 시각(Authored Date) 기준으로 오름차순(오래된 순) 정렬!
+            allRawCommits.sort(Comparator.comparing(RawCommitData::getAuthoredDate));
 
-                String finalMsg = String.format("✅ *[실시간 잔디 보고]*\n주인님, 오늘 총 *%d회*의 커밋을 기록하셨습니다! 🚀\n\n%s",
-                        totalCommitCount, slackBody.toString());
+            // 3. 정렬된 순서대로 노션에 밀어넣고 슬랙 메시지 조립
+            int totalNewCount = 0;
+            Map<String, List<String>> summaryMap = new LinkedHashMap<>();
+
+            for (RawCommitData raw : allRawCommits) {
+                if (sendToNotionWithDuplicateCheck(today.toString(), raw.repoName, raw.message, raw.sha)) {
+                    totalNewCount++;
+                    summaryMap.computeIfAbsent(raw.repoName, k -> new ArrayList<>()).add(raw.message);
+                }
+            }
+
+            // 4. 슬랙 보고
+            if (totalNewCount > 0) {
+                StringBuilder slackBody = new StringBuilder();
+                summaryMap.forEach((repo, msgs) -> {
+                    slackBody.append("*[").append(repo).append("]* (").append(msgs.size()).append("회)\n");
+                    msgs.forEach(m -> slackBody.append("- ").append(m).append("\n"));
+                    slackBody.append("\n");
+                });
+
+                String finalMsg = String.format("✅ *[실시간 잔디 보고]*\n주인님, 오늘 새롭게 *%d회*의 커밋이 시간순으로 기록되었습니다! 🚀\n\n%s",
+                        totalNewCount, slackBody.toString());
                 sendToSlack(finalMsg);
             } else {
-                System.out.println("🚨 오늘 기록된 잔디가 없습니다.");
+                System.out.println("🚨 새로 추가할 잔디가 없습니다.");
             }
         } catch (Exception e) {
-            System.err.println("❌ 잔디 검사 중 에러: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
-    // --- 📔 Notion 전송 (1커밋 1로우 전용) ---
-    private static void sendToNotionSingle(String date, String repoName, String commitMsg) throws IOException {
+    // --- 📔 Notion 중복 체크 및 전송 ---
+    private static boolean sendToNotionWithDuplicateCheck(String date, String repoName, String commitMsg, String sha)
+            throws IOException {
         if (NOTION_TOKEN == null || NOTION_DB_ID == null)
-            return;
+            return false;
         OkHttpClient client = new OkHttpClient();
+
+        // 1. 🔍 중복 체크 (커밋ID로 조회)
+        String queryJson = "{\"filter\":{\"property\":\"커밋ID\",\"rich_text\":{\"equals\":\"" + sha + "\"}}}";
+        RequestBody queryBody = RequestBody.create(queryJson, MediaType.get("application/json; charset=utf-8"));
+        Request queryReq = new Request.Builder()
+                .url("https://api.notion.com/v1/databases/" + NOTION_DB_ID + "/query")
+                .addHeader("Authorization", "Bearer " + NOTION_TOKEN)
+                .addHeader("Notion-Version", "2022-06-28")
+                .post(queryBody).build();
+
+        try (Response response = client.newCall(queryReq).execute()) {
+            String resultStr = response.body().string();
+            JsonObject resultJson = JsonParser.parseString(resultStr).getAsJsonObject();
+            if (resultJson.getAsJsonArray("results").size() > 0)
+                return false;
+        }
+
+        // 2. 📝 데이터 입력
         JsonObject json = new JsonObject();
         JsonObject parent = new JsonObject();
         parent.addProperty("database_id", NOTION_DB_ID);
         json.add("parent", parent);
 
         JsonObject props = new JsonObject();
-
-        // 1. 제목 (커밋 메시지 첫 줄 요약)
         String titleStr = commitMsg.split("\n")[0];
         props.add("제목", createTitle("[" + repoName + "] " + titleStr));
-
-        // 2. 레포지토리 (Multi-select)
         props.add("레포지토리", createMultiSelect(Collections.singletonList(repoName)));
-
-        // 3. 커밋 메시지 (전체 메시지)
         props.add("커밋 메시지", createText(commitMsg));
+        props.add("커밋ID", createText(sha));
 
-        // 4. 날짜
         JsonObject dateVal = new JsonObject();
         dateVal.addProperty("start", date);
         JsonObject dateProp = new JsonObject();
         dateProp.add("date", dateVal);
         props.add("날짜", dateProp);
 
-        // 5. 상태
         JsonObject checkbox = new JsonObject();
         checkbox.addProperty("checkbox", true);
         props.add("상태", checkbox);
@@ -263,8 +279,7 @@ public class App {
                 .post(body).build();
 
         try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful())
-                System.err.println("❌ 노션 에러: " + response.body().string());
+            return response.isSuccessful();
         }
     }
 
@@ -370,6 +385,25 @@ public class App {
         }
         w.add("multi_select", a);
         return w;
+    }
+
+    // --- 데이터 구조 클래스 ---
+    private static class RawCommitData {
+        String repoName;
+        String message;
+        String sha;
+        Date authoredDate;
+
+        RawCommitData(String r, String m, String s, Date d) {
+            this.repoName = r;
+            this.message = m;
+            this.sha = s;
+            this.authoredDate = d;
+        }
+
+        public Date getAuthoredDate() {
+            return authoredDate;
+        }
     }
 
     private static class CommitInfo {
