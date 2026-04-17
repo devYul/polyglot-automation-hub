@@ -44,7 +44,9 @@ public class App {
         String task = (args.length > 0) ? args[0].toUpperCase() : "ALL";
         try {
             System.out.println("🚀 Jarvis-Yul 시스템 가동 준비... (Task: " + task + ")");
-
+            // ⚠️ 환경변수 인식 확인용 (테스트 후 삭제하세요)
+            System.out.println("DEBUG: GITHUB_TOKEN 존재 여부 -> " + (System.getenv("GITHUB_TOKEN") != null));
+            System.out.println("DEBUG: SLACK_WEBHOOK_URL 존재 여부 -> " + (System.getenv("SLACK_WEBHOOK_URL") != null));
             if (!restoreToken()) {
                 System.out.println("⚠️ 로컬 환경 감지: 인증이 필요한 작업(메일, 깃허브)은 스킵합니다.");
             } else {
