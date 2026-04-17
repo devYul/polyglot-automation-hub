@@ -1,8 +1,8 @@
-name: Jarvis-Yul Night Grass Check
+name: Jarvis-Yul Night Commit Check
 
 on:
   schedule:
-    # 한국 시간(KST) 오후 10시는 UTC 13:00입니다.
+    # 한국 시간(KST) 밤 22:00 (UTC 13:00)
     - cron: '0 13 * * *'
   workflow_dispatch:
 
@@ -21,9 +21,10 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x java-core/gradlew
 
-      - name: Run Night Task
+      - name: Run Commit Task
         working-directory: java-core
-        run: ./gradlew run --args='COMMIT' # 'COMMIT' 인수 전달
+        # ⚠️ 자바 코드에 'COMMIT' 명령어만 던져서 잔디 검사만 수행합니다.
+        run: ./gradlew run --args='COMMIT'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
