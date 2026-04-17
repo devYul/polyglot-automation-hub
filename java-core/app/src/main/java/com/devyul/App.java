@@ -74,6 +74,7 @@ public class App {
         }
     }
 
+    // --- 주식 시황 모듈 ---
     public static void getStockMarket() {
         System.out.println("📈 주식 시황 데이터 및 차트 수집 중...");
         Map<String, String> stockMap = new LinkedHashMap<>();
@@ -140,6 +141,7 @@ public class App {
             sendRichSlackMessage("📈 *[자비스 주식 스나이퍼 브리핑]*", attachments);
     }
 
+    // --- 뉴스 RSS 브리핑 ---
     private static void getHeadlineNews() {
         System.out.println("📰 뉴스 수집 중...");
         try {
@@ -177,25 +179,20 @@ public class App {
         }
     }
 
+    // --- 🔐 GitHub 잔디 분석 (상세 브리핑 버전) ---
     private static void runDailyAutomation() {
         System.out.println("🔍 GitHub 활동 분석 중...");
-        if (GITHUB_TOKEN == null || GITHUB_TOKEN.isEmpty()) {
-            System.err.println("⚠️ GITHUB_TOKEN이 설정되지 않았습니다.");
+        if (GITHUB_TOKEN == null || GITHUB_TOKEN.isEmpty())
             return;
-        }
+
         try {
             GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
-            GHMyself myself;
-            try {
-                myself = github.getMyself();
-            } catch (HttpException e) {
-                System.err.println("❌ GitHub 인증 실패 (403): 토큰의 repo, read:user 권한을 확인해 주세요.");
-                return;
-            }
-
+            GHMyself myself = github.getMyself();
             LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
             List<CommitInfo> todayCommits = new ArrayList<>();
+
             for (GHRepository repo : myself.listRepositories()) {
+                // 최근 24시간 내 커밋만 필터링
                 List<GHCommit> commits = repo.queryCommits().since(java.sql.Date.valueOf(displayDate.minusDays(1)))
                         .list().toList();
                 if (!commits.isEmpty()) {
@@ -209,17 +206,73 @@ public class App {
                     todayCommits.add(new CommitInfo(repo.getName(), messages));
                 }
             }
+
             if (!todayCommits.isEmpty()) {
+                // 노션 기록
                 sendToNotion(displayDate.toString(), todayCommits);
-                sendToSlack(String.format("✅ [보고] 오늘 %d개 레포 잔디 완료! 🚀", todayCommits.size()));
+
+                // 슬랙 상세 메시지 조립
+                StringBuilder slackBody = new StringBuilder();
+                int totalCommitCount = 0;
+
+                for (CommitInfo info : todayCommits) {
+                    totalCommitCount += info.messages.size();
+                    slackBody.append("*[").append(info.repoName).append("]* (").append(info.messages.size())
+                            .append("회)\n");
+                    for (String msg : info.messages) {
+                        slackBody.append("- ").append(msg).append("\n");
+                    }
+                    slackBody.append("\n");
+                }
+
+                String finalMsg = String.format("✅ *[실시간 잔디 보고]*\n주인님, 오늘 총 *%d회*의 커밋을 기록하셨습니다! 🚀\n\n%s",
+                        totalCommitCount, slackBody.toString());
+                sendToSlack(finalMsg);
             } else {
-                System.out.println("🚨 오늘 심은 잔디가 없습니다.");
+                System.out.println("🚨 오늘 기록된 잔디가 없습니다.");
             }
         } catch (Exception e) {
             System.err.println("❌ 잔디 검사 중 에러: " + e.getMessage());
         }
     }
 
+    // --- 📔 Notion 전송 (5개 컬럼) ---
+    private static void sendToNotion(String date, List<CommitInfo> commitInfos) throws IOException {
+        if (NOTION_TOKEN == null || NOTION_DB_ID == null)
+            return;
+        OkHttpClient client = new OkHttpClient();
+        JsonObject json = new JsonObject();
+        JsonObject parent = new JsonObject();
+        parent.addProperty("database_id", NOTION_DB_ID);
+        json.add("parent", parent);
+
+        JsonObject props = new JsonObject();
+        props.add("제목", createTitle(date + " 활동 보고"));
+        List<String> repoNames = commitInfos.stream().map(i -> i.repoName).collect(Collectors.toList());
+        props.add("레포지토리", createMultiSelect(repoNames));
+        String allMessages = commitInfos.stream().map(i -> "[" + i.repoName + "]\n- " + String.join("\n- ", i.messages))
+                .collect(Collectors.joining("\n\n"));
+        props.add("커밋 메시지", createText(allMessages));
+        JsonObject dateVal = new JsonObject();
+        dateVal.addProperty("start", date);
+        JsonObject dateProp = new JsonObject();
+        dateProp.add("date", dateVal);
+        props.add("날짜", dateProp);
+        JsonObject checkbox = new JsonObject();
+        checkbox.addProperty("checkbox", true);
+        props.add("상태", checkbox);
+
+        json.add("properties", props);
+        RequestBody body = RequestBody.create(new Gson().toJson(json),
+                MediaType.get("application/json; charset=utf-8"));
+        Request request = new Request.Builder().url("https://api.notion.com/v1/pages")
+                .addHeader("Authorization", "Bearer " + NOTION_TOKEN)
+                .addHeader("Notion-Version", "2022-06-28")
+                .post(body).build();
+        client.newCall(request).execute().close();
+    }
+
+    // --- 보안/전송 유틸리티 ---
     private static boolean restoreToken() {
         try {
             String b64 = System.getenv("GMAIL_TOKEN");
@@ -265,25 +318,6 @@ public class App {
         }
     }
 
-    private static void sendToNotion(String date, List<CommitInfo> commitInfos) throws IOException {
-        if (NOTION_TOKEN == null || NOTION_DB_ID == null)
-            return;
-        OkHttpClient client = new OkHttpClient();
-        JsonObject json = new JsonObject();
-        JsonObject parent = new JsonObject();
-        parent.addProperty("database_id", NOTION_DB_ID);
-        json.add("parent", parent);
-        JsonObject props = new JsonObject();
-        props.add("제목", createTitle(date + " 활동 보고"));
-        json.add("properties", props);
-        RequestBody body = RequestBody.create(new Gson().toJson(json),
-                MediaType.get("application/json; charset=utf-8"));
-        Request req = new Request.Builder().url("https://api.notion.com/v1/pages")
-                .addHeader("Authorization", "Bearer " + NOTION_TOKEN).addHeader("Notion-Version", "2022-06-28")
-                .post(body).build();
-        client.newCall(req).execute().close();
-    }
-
     private static void sendToSlack(String text) {
         sendRichSlackMessage(text, null);
     }
@@ -315,6 +349,30 @@ public class App {
         t.add("text", c);
         a.add(t);
         w.add("title", a);
+        return w;
+    }
+
+    private static JsonObject createText(String text) {
+        JsonObject w = new JsonObject();
+        JsonArray a = new JsonArray();
+        JsonObject t = new JsonObject();
+        JsonObject c = new JsonObject();
+        c.addProperty("content", text);
+        t.add("text", c);
+        a.add(t);
+        w.add("rich_text", a);
+        return w;
+    }
+
+    private static JsonObject createMultiSelect(List<String> names) {
+        JsonObject w = new JsonObject();
+        JsonArray a = new JsonArray();
+        for (String n : names) {
+            JsonObject o = new JsonObject();
+            o.addProperty("name", n);
+            a.add(o);
+        }
+        w.add("multi_select", a);
         return w;
     }
 

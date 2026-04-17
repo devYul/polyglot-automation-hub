@@ -1,8 +1,11 @@
-name: Jarvis-Yul Night Commit Check
+name: Jarvis-Yul Commit & Push Check
 
 on:
+  # ⚠️ 실시간 알림: 메인 브랜치에 푸시가 발생하면 즉시 실행합니다!
+  push:
+    branches: [ main ]
   schedule:
-    # 한국 시간(KST) 밤 22:00 (UTC 13:00)
+    # 한국 시간(KST) 밤 22:00 (기존 야간 정기 검사 유지)
     - cron: '0 13 * * *'
   workflow_dispatch:
 
@@ -23,7 +26,6 @@ jobs:
 
       - name: Run Commit Task
         working-directory: java-core
-        # ⚠️ 자바 코드에 'COMMIT' 명령어만 던져서 잔디 검사만 수행합니다.
         run: ./gradlew run --args='COMMIT'
         env:
           GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
