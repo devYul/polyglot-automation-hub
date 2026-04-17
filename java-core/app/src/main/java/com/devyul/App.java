@@ -76,7 +76,7 @@ public class App {
 
     // --- 주식 시황 모듈 ---
     public static void getStockMarket() {
-        System.out.println("📈 주식 시황 데이터 및 차트 수집 중...");
+        System.out.println("📈 주식 시황 데이터 수집 중...");
         Map<String, String> stockMap = new LinkedHashMap<>();
         stockMap.put("TSLA.O", "TSLA (테슬라)");
         stockMap.put("PLTR.O", "PLTR (팔란티어)");
@@ -103,20 +103,8 @@ public class App {
                     String changeAmt = jsonObject.get("compareToPreviousClosePrice").getAsString();
                     String changePct = jsonObject.get("fluctuationsRatio").getAsString();
 
-                    String directionIcon = "➖";
-                    String hexColor = "#8E8E93";
-
-                    if (changePct.startsWith("-")) {
-                        directionIcon = "🔵";
-                        hexColor = "#007AFF";
-                    } else if (!changePct.equals("0") && !changePct.equals("0.00")) {
-                        directionIcon = "🔴";
-                        hexColor = "#FF3B30";
-                        if (!changeAmt.startsWith("+"))
-                            changeAmt = "+" + changeAmt;
-                        if (!changePct.startsWith("+"))
-                            changePct = "+" + changePct;
-                    }
+                    String directionIcon = (changePct.startsWith("-")) ? "🔵" : "🔴";
+                    String hexColor = (changePct.startsWith("-")) ? "#007AFF" : "#FF3B30";
 
                     JsonObject attachment = new JsonObject();
                     attachment.addProperty("color", hexColor);
@@ -131,19 +119,15 @@ public class App {
                     successCount++;
                 }
             } catch (Exception e) {
-                JsonObject errorAttachment = new JsonObject();
-                errorAttachment.addProperty("title", "⚠️ " + displayName + " 수집 실패");
-                errorAttachment.addProperty("text", e.getMessage());
-                attachments.add(errorAttachment);
+                e.printStackTrace();
             }
         }
         if (successCount > 0)
             sendRichSlackMessage("📈 *[자비스 주식 스나이퍼 브리핑]*", attachments);
     }
 
-    // --- 뉴스 RSS 브리핑 ---
+    // --- 뉴스 브리핑 ---
     private static void getHeadlineNews() {
-        System.out.println("📰 뉴스 수집 중...");
         try {
             OkHttpClient client = new OkHttpClient();
             StringBuilder slackMessage = new StringBuilder("📰 *[자비스 모닝 종합 브리핑]*\n\n");
@@ -179,7 +163,7 @@ public class App {
         }
     }
 
-    // --- 🔐 GitHub 잔디 분석 (상세 브리핑 버전) ---
+    // --- 🔐 GitHub 잔디 분석 (당일 기준 + 1커밋 1로우) ---
     private static void runDailyAutomation() {
         System.out.println("🔍 GitHub 활동 분석 중...");
         if (GITHUB_TOKEN == null || GITHUB_TOKEN.isEmpty())
@@ -188,35 +172,34 @@ public class App {
         try {
             GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
             GHMyself myself = github.getMyself();
-            LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+            LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+
+            // ⚠️ 수정: '오늘 00:00' 이후의 커밋만 가져오도록 엄격하게 제한
+            Date sinceDate = java.sql.Date.valueOf(today);
+
             List<CommitInfo> todayCommits = new ArrayList<>();
+            int totalCommitCount = 0;
 
             for (GHRepository repo : myself.listRepositories()) {
-                // 최근 24시간 내 커밋만 필터링
-                List<GHCommit> commits = repo.queryCommits().since(java.sql.Date.valueOf(displayDate.minusDays(1)))
-                        .list().toList();
+                List<GHCommit> commits = repo.queryCommits().since(sinceDate).list().toList();
+
                 if (!commits.isEmpty()) {
-                    List<String> messages = commits.stream().map(c -> {
-                        try {
-                            return c.getCommitShortInfo().getMessage();
-                        } catch (IOException e) {
-                            return "실패";
-                        }
-                    }).collect(Collectors.toList());
+                    List<String> messages = new ArrayList<>();
+                    for (GHCommit commit : commits) {
+                        String msg = commit.getCommitShortInfo().getMessage();
+                        messages.add(msg);
+                        totalCommitCount++;
+
+                        // ⚠️ 수정: 커밋 한 개당 노션 로우 한 개 생성
+                        sendToNotionSingle(today.toString(), repo.getName(), msg);
+                    }
                     todayCommits.add(new CommitInfo(repo.getName(), messages));
                 }
             }
 
-            if (!todayCommits.isEmpty()) {
-                // 노션 기록
-                sendToNotion(displayDate.toString(), todayCommits);
-
-                // 슬랙 상세 메시지 조립
+            if (totalCommitCount > 0) {
                 StringBuilder slackBody = new StringBuilder();
-                int totalCommitCount = 0;
-
                 for (CommitInfo info : todayCommits) {
-                    totalCommitCount += info.messages.size();
                     slackBody.append("*[").append(info.repoName).append("]* (").append(info.messages.size())
                             .append("회)\n");
                     for (String msg : info.messages) {
@@ -236,8 +219,8 @@ public class App {
         }
     }
 
-    // --- 📔 Notion 전송 (5개 컬럼) ---
-    private static void sendToNotion(String date, List<CommitInfo> commitInfos) throws IOException {
+    // --- 📔 Notion 전송 (1커밋 1로우 전용) ---
+    private static void sendToNotionSingle(String date, String repoName, String commitMsg) throws IOException {
         if (NOTION_TOKEN == null || NOTION_DB_ID == null)
             return;
         OkHttpClient client = new OkHttpClient();
@@ -247,29 +230,42 @@ public class App {
         json.add("parent", parent);
 
         JsonObject props = new JsonObject();
-        props.add("제목", createTitle(date + " 활동 보고"));
-        List<String> repoNames = commitInfos.stream().map(i -> i.repoName).collect(Collectors.toList());
-        props.add("레포지토리", createMultiSelect(repoNames));
-        String allMessages = commitInfos.stream().map(i -> "[" + i.repoName + "]\n- " + String.join("\n- ", i.messages))
-                .collect(Collectors.joining("\n\n"));
-        props.add("커밋 메시지", createText(allMessages));
+
+        // 1. 제목 (커밋 메시지 첫 줄 요약)
+        String titleStr = commitMsg.split("\n")[0];
+        props.add("제목", createTitle("[" + repoName + "] " + titleStr));
+
+        // 2. 레포지토리 (Multi-select)
+        props.add("레포지토리", createMultiSelect(Collections.singletonList(repoName)));
+
+        // 3. 커밋 메시지 (전체 메시지)
+        props.add("커밋 메시지", createText(commitMsg));
+
+        // 4. 날짜
         JsonObject dateVal = new JsonObject();
         dateVal.addProperty("start", date);
         JsonObject dateProp = new JsonObject();
         dateProp.add("date", dateVal);
         props.add("날짜", dateProp);
+
+        // 5. 상태
         JsonObject checkbox = new JsonObject();
         checkbox.addProperty("checkbox", true);
         props.add("상태", checkbox);
 
         json.add("properties", props);
+
         RequestBody body = RequestBody.create(new Gson().toJson(json),
                 MediaType.get("application/json; charset=utf-8"));
         Request request = new Request.Builder().url("https://api.notion.com/v1/pages")
                 .addHeader("Authorization", "Bearer " + NOTION_TOKEN)
                 .addHeader("Notion-Version", "2022-06-28")
                 .post(body).build();
-        client.newCall(request).execute().close();
+
+        try (Response response = client.newCall(request).execute()) {
+            if (!response.isSuccessful())
+                System.err.println("❌ 노션 에러: " + response.body().string());
+        }
     }
 
     // --- 보안/전송 유틸리티 ---
