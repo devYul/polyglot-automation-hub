@@ -26,7 +26,7 @@ jobs:
         # ⚠️ 자바 코드에 'COMMIT' 명령어만 던져서 잔디 검사만 수행합니다.
         run: ./gradlew run --args='COMMIT'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
