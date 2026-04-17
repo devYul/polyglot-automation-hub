@@ -18,8 +18,8 @@ import com.google.api.services.gmail.model.Message;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDate;
-import java.time.ZoneId;
+import java.time.*;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import javax.xml.parsers.DocumentBuilder;
@@ -46,7 +46,7 @@ public class App {
             System.out.println("🚀 Jarvis-Yul 시스템 가동 준비... (Task: " + task + ")");
 
             if (!restoreToken()) {
-                System.out.println("⚠️ 로컬 환경 감지: 인증이 필요한 작업(메일, 깃허브)은 스킵합니다.");
+                System.out.println("⚠️ 로컬 환경 감지: 인증이 필요한 작업은 스킵합니다.");
             } else {
                 Gmail gmailService = getGmailService();
                 if (gmailService != null) {
@@ -67,7 +67,6 @@ public class App {
             }
 
             System.out.println("🏁 [" + task + "] 임무가 완료되었습니다.");
-
         } catch (Exception e) {
             System.err.println("❌ 시스템 가동 중 치명적 에러 발생!");
             e.printStackTrace();
@@ -163,19 +162,20 @@ public class App {
         }
     }
 
-    // --- 🔐 GitHub 잔디 분석 (시간순 정렬 정밀 타격) ---
+    // --- 🔐 GitHub 활동 분석 (당일/시간순/중복체크) ---
     private static void runDailyAutomation() {
-        System.out.println("🔍 GitHub 활동 분석 및 시간순 정렬 중...");
+        System.out.println("🔍 GitHub 활동 분석 및 KST 시간순 정렬 중...");
         if (GITHUB_TOKEN == null || GITHUB_TOKEN.isEmpty())
             return;
 
         try {
             GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
             GHMyself myself = github.getMyself();
-            LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
-            Date sinceDate = java.sql.Date.valueOf(today);
 
-            // 1. 모든 레포지토리에서 오늘 발생한 커밋을 일단 싹 다 긁어모읍니다.
+            // KST 오늘 00:00:00 기준 설정
+            ZonedDateTime kstStart = LocalDate.now(ZoneId.of("Asia/Seoul")).atStartOfDay(ZoneId.of("Asia/Seoul"));
+            Date sinceDate = Date.from(kstStart.toInstant());
+
             List<RawCommitData> allRawCommits = new ArrayList<>();
 
             for (GHRepository repo : myself.listRepositories()) {
@@ -189,21 +189,20 @@ public class App {
                 }
             }
 
-            // 2. ⚠️ 핵심: 커밋 시각(Authored Date) 기준으로 오름차순(오래된 순) 정렬!
+            // 오래된 순으로 정렬
             allRawCommits.sort(Comparator.comparing(RawCommitData::getAuthoredDate));
 
-            // 3. 정렬된 순서대로 노션에 밀어넣고 슬랙 메시지 조립
             int totalNewCount = 0;
             Map<String, List<String>> summaryMap = new LinkedHashMap<>();
 
             for (RawCommitData raw : allRawCommits) {
-                if (sendToNotionWithDuplicateCheck(today.toString(), raw.repoName, raw.message, raw.sha)) {
+                if (sendToNotionWithDuplicateCheck(kstStart.toLocalDate().toString(), raw.repoName, raw.message,
+                        raw.sha)) {
                     totalNewCount++;
                     summaryMap.computeIfAbsent(raw.repoName, k -> new ArrayList<>()).add(raw.message);
                 }
             }
 
-            // 4. 슬랙 보고
             if (totalNewCount > 0) {
                 StringBuilder slackBody = new StringBuilder();
                 summaryMap.forEach((repo, msgs) -> {
@@ -211,8 +210,7 @@ public class App {
                     msgs.forEach(m -> slackBody.append("- ").append(m).append("\n"));
                     slackBody.append("\n");
                 });
-
-                String finalMsg = String.format("✅ *[실시간 잔디 보고]*\n주인님, 오늘 새롭게 *%d회*의 커밋이 시간순으로 기록되었습니다! 🚀\n\n%s",
+                String finalMsg = String.format("✅ *[실시간 잔디 보고]*\n주인님, 오늘 새롭게 *%d회*의 커밋이 기록되었습니다! 🚀\n\n%s",
                         totalNewCount, slackBody.toString());
                 sendToSlack(finalMsg);
             } else {
@@ -223,34 +221,30 @@ public class App {
         }
     }
 
-    // --- 📔 Notion 중복 체크 및 전송 ---
+    // --- 📔 Notion 중복 체크 및 1커밋 1로우 전송 ---
     private static boolean sendToNotionWithDuplicateCheck(String date, String repoName, String commitMsg, String sha)
             throws IOException {
         if (NOTION_TOKEN == null || NOTION_DB_ID == null)
             return false;
         OkHttpClient client = new OkHttpClient();
 
-        // 1. 🔍 중복 체크 (커밋ID로 조회)
+        // 중복 체크 쿼리
         String queryJson = "{\"filter\":{\"property\":\"커밋ID\",\"rich_text\":{\"equals\":\"" + sha + "\"}}}";
         RequestBody queryBody = RequestBody.create(queryJson, MediaType.get("application/json; charset=utf-8"));
         Request queryReq = new Request.Builder()
                 .url("https://api.notion.com/v1/databases/" + NOTION_DB_ID + "/query")
                 .addHeader("Authorization", "Bearer " + NOTION_TOKEN)
-                .addHeader("Notion-Version", "2022-06-28")
-                .post(queryBody).build();
+                .addHeader("Notion-Version", "2022-06-28").post(queryBody).build();
 
         try (Response response = client.newCall(queryReq).execute()) {
-            String resultStr = response.body().string();
-            JsonObject resultJson = JsonParser.parseString(resultStr).getAsJsonObject();
+            JsonObject resultJson = JsonParser.parseString(response.body().string()).getAsJsonObject();
             if (resultJson.getAsJsonArray("results").size() > 0)
                 return false;
         }
 
-        // 2. 📝 데이터 입력
+        // 데이터 입력
         JsonObject json = new JsonObject();
-        JsonObject parent = new JsonObject();
-        parent.addProperty("database_id", NOTION_DB_ID);
-        json.add("parent", parent);
+        json.add("parent", createObject("database_id", NOTION_DB_ID));
 
         JsonObject props = new JsonObject();
         String titleStr = commitMsg.split("\n")[0];
@@ -258,36 +252,26 @@ public class App {
         props.add("레포지토리", createMultiSelect(Collections.singletonList(repoName)));
         props.add("커밋 메시지", createText(commitMsg));
         props.add("커밋ID", createText(sha));
-
-        JsonObject dateVal = new JsonObject();
-        dateVal.addProperty("start", date);
-        JsonObject dateProp = new JsonObject();
-        dateProp.add("date", dateVal);
-        props.add("날짜", dateProp);
-
-        JsonObject checkbox = new JsonObject();
-        checkbox.addProperty("checkbox", true);
-        props.add("상태", checkbox);
+        props.add("날짜", createDate(date));
+        props.add("상태", createCheckbox(true));
 
         json.add("properties", props);
-
         RequestBody body = RequestBody.create(new Gson().toJson(json),
                 MediaType.get("application/json; charset=utf-8"));
         Request request = new Request.Builder().url("https://api.notion.com/v1/pages")
                 .addHeader("Authorization", "Bearer " + NOTION_TOKEN)
-                .addHeader("Notion-Version", "2022-06-28")
-                .post(body).build();
+                .addHeader("Notion-Version", "2022-06-28").post(body).build();
 
         try (Response response = client.newCall(request).execute()) {
             return response.isSuccessful();
         }
     }
 
-    // --- 보안/전송 유틸리티 ---
+    // --- 유틸리티 및 보안 로직 ---
     private static boolean restoreToken() {
         try {
             String b64 = System.getenv("GMAIL_TOKEN");
-            if (b64 == null || b64.isEmpty())
+            if (b64 == null)
                 return false;
             File dir = new File(TOKENS_DIRECTORY);
             if (!dir.exists())
@@ -303,15 +287,13 @@ public class App {
 
     private static Gmail getGmailService() throws Exception {
         String b64 = System.getenv("GMAIL_CREDENTIALS");
-        if (b64 == null || b64.isEmpty())
+        if (b64 == null)
             return null;
         byte[] decoded = Base64.getDecoder().decode(b64.trim());
-        String json = new String(decoded, StandardCharsets.UTF_8).replace("\uFEFF", "").trim();
-        GoogleClientSecrets secrets = GoogleClientSecrets.load(JSON_FACTORY, new StringReader(json));
+        GoogleClientSecrets secrets = GoogleClientSecrets.load(JSON_FACTORY, new StringReader(new String(decoded)));
         GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
                 GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, secrets, SCOPES)
-                .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY)))
-                .setAccessType("offline").build();
+                .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY))).build();
         Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver()).authorize("user");
         return new Gmail.Builder(GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, credential)
                 .setApplicationName(APPLICATION_NAME).build();
@@ -345,12 +327,12 @@ public class App {
                 json.add("attachments", attachments);
             RequestBody body = RequestBody.create(new Gson().toJson(json),
                     MediaType.get("application/json; charset=utf-8"));
-            Request req = new Request.Builder().url(SLACK_WEBHOOK_URL).post(body).build();
-            client.newCall(req).execute().close();
+            client.newCall(new Request.Builder().url(SLACK_WEBHOOK_URL).post(body).build()).execute().close();
         } catch (Exception ignored) {
         }
     }
 
+    // --- Notion JSON Helpers ---
     private static JsonObject createTitle(String text) {
         JsonObject w = new JsonObject();
         JsonArray a = new JsonArray();
@@ -387,7 +369,26 @@ public class App {
         return w;
     }
 
-    // --- 데이터 구조 클래스 ---
+    private static JsonObject createDate(String date) {
+        JsonObject w = new JsonObject();
+        JsonObject d = new JsonObject();
+        d.addProperty("start", date);
+        w.add("date", d);
+        return w;
+    }
+
+    private static JsonObject createCheckbox(boolean checked) {
+        JsonObject w = new JsonObject();
+        w.addProperty("checkbox", checked);
+        return w;
+    }
+
+    private static JsonObject createObject(String key, String val) {
+        JsonObject o = new JsonObject();
+        o.addProperty(key, val);
+        return o;
+    }
+
     private static class RawCommitData {
         String repoName;
         String message;
@@ -403,16 +404,6 @@ public class App {
 
         public Date getAuthoredDate() {
             return authoredDate;
-        }
-    }
-
-    private static class CommitInfo {
-        String repoName;
-        List<String> messages;
-
-        CommitInfo(String r, List<String> m) {
-            this.repoName = r;
-            this.messages = m;
         }
     }
 }

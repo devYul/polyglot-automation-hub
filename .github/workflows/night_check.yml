@@ -1,12 +1,10 @@
 name: Jarvis-Yul Commit & Push Check
 
 on:
-  # ⚠️ 실시간 알림: 메인 브랜치에 푸시가 발생하면 즉시 실행합니다!
   push:
     branches: [ main ]
   schedule:
-    # 한국 시간(KST) 밤 22:00 (기존 야간 정기 검사 유지)
-    - cron: '0 13 * * *'
+    - cron: '0 13 * * *' # KST 22:00
   workflow_dispatch:
 
 jobs:
@@ -14,16 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
       - name: Set up JDK 17
         uses: actions/setup-java@v3
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      - name: Grant execute permission for gradlew
+      - name: Grant execute permission
         run: chmod +x java-core/gradlew
-
       - name: Run Commit Task
         working-directory: java-core
         run: ./gradlew run --args='COMMIT'
