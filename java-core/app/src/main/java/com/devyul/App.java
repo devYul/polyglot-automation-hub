@@ -44,9 +44,7 @@ public class App {
         String task = (args.length > 0) ? args[0].toUpperCase() : "ALL";
         try {
             System.out.println("🚀 Jarvis-Yul 시스템 가동 준비... (Task: " + task + ")");
-            // ⚠️ 환경변수 인식 확인용 (테스트 후 삭제하세요)
-            System.out.println("DEBUG: GITHUB_TOKEN 존재 여부 -> " + (System.getenv("GITHUB_TOKEN") != null));
-            System.out.println("DEBUG: SLACK_WEBHOOK_URL 존재 여부 -> " + (System.getenv("SLACK_WEBHOOK_URL") != null));
+
             if (!restoreToken()) {
                 System.out.println("⚠️ 로컬 환경 감지: 인증이 필요한 작업(메일, 깃허브)은 스킵합니다.");
             } else {
@@ -65,11 +63,7 @@ public class App {
             }
 
             if (task.equals("COMMIT") || task.equals("ALL")) {
-                if (GITHUB_TOKEN != null) {
-                    runDailyAutomation();
-                } else {
-                    System.out.println("⚠️ GITHUB_TOKEN이 없어 잔디 검사를 스킵합니다.");
-                }
+                runDailyAutomation();
             }
 
             System.out.println("🏁 [" + task + "] 임무가 완료되었습니다.");
@@ -80,10 +74,8 @@ public class App {
         }
     }
 
-    // --- 주식 시황 모듈 (네이버 API + 차트 이미지) ---
     public static void getStockMarket() {
         System.out.println("📈 주식 시황 데이터 및 차트 수집 중...");
-
         Map<String, String> stockMap = new LinkedHashMap<>();
         stockMap.put("TSLA.O", "TSLA (테슬라)");
         stockMap.put("PLTR.O", "PLTR (팔란티어)");
@@ -103,7 +95,6 @@ public class App {
                 try (Response response = client.newCall(request).execute()) {
                     if (!response.isSuccessful() || response.body() == null)
                         throw new Exception("HTTP " + response.code());
-
                     String jsonResponse = response.body().string();
                     JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
 
@@ -149,7 +140,6 @@ public class App {
             sendRichSlackMessage("📈 *[자비스 주식 스나이퍼 브리핑]*", attachments);
     }
 
-    // --- 뉴스 RSS 브리핑 ---
     private static void getHeadlineNews() {
         System.out.println("📰 뉴스 수집 중...");
         try {
@@ -187,45 +177,49 @@ public class App {
         }
     }
 
-    // --- Gmail 알림 ---
-    private static void checkNewEmails(Gmail service) throws IOException {
-        ListMessagesResponse response = service.users().messages().list("me").setQ("is:unread").setMaxResults(3L)
-                .execute();
-        List<Message> messages = response.getMessages();
-        if (messages != null) {
-            for (Message m : messages) {
-                Message full = service.users().messages().get("me", m.getId()).execute();
-                sendToSlack("📬 [메일 알림] " + full.getSnippet());
+    private static void runDailyAutomation() {
+        System.out.println("🔍 GitHub 활동 분석 중...");
+        if (GITHUB_TOKEN == null || GITHUB_TOKEN.isEmpty()) {
+            System.err.println("⚠️ GITHUB_TOKEN이 설정되지 않았습니다.");
+            return;
+        }
+        try {
+            GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
+            GHMyself myself;
+            try {
+                myself = github.getMyself();
+            } catch (HttpException e) {
+                System.err.println("❌ GitHub 인증 실패 (403): 토큰의 repo, read:user 권한을 확인해 주세요.");
+                return;
             }
+
+            LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+            List<CommitInfo> todayCommits = new ArrayList<>();
+            for (GHRepository repo : myself.listRepositories()) {
+                List<GHCommit> commits = repo.queryCommits().since(java.sql.Date.valueOf(displayDate.minusDays(1)))
+                        .list().toList();
+                if (!commits.isEmpty()) {
+                    List<String> messages = commits.stream().map(c -> {
+                        try {
+                            return c.getCommitShortInfo().getMessage();
+                        } catch (IOException e) {
+                            return "실패";
+                        }
+                    }).collect(Collectors.toList());
+                    todayCommits.add(new CommitInfo(repo.getName(), messages));
+                }
+            }
+            if (!todayCommits.isEmpty()) {
+                sendToNotion(displayDate.toString(), todayCommits);
+                sendToSlack(String.format("✅ [보고] 오늘 %d개 레포 잔디 완료! 🚀", todayCommits.size()));
+            } else {
+                System.out.println("🚨 오늘 심은 잔디가 없습니다.");
+            }
+        } catch (Exception e) {
+            System.err.println("❌ 잔디 검사 중 에러: " + e.getMessage());
         }
     }
 
-    // --- 깃허브 잔디/노션 박제 (기존 로직 유지) ---
-    private static void runDailyAutomation() throws Exception {
-        GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
-        LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
-        List<CommitInfo> todayCommits = new ArrayList<>();
-        for (GHRepository repo : github.getMyself().listRepositories()) {
-            List<GHCommit> commits = repo.queryCommits().since(java.sql.Date.valueOf(displayDate.minusDays(1))).list()
-                    .toList();
-            if (!commits.isEmpty()) {
-                List<String> messages = commits.stream().map(c -> {
-                    try {
-                        return c.getCommitShortInfo().getMessage();
-                    } catch (IOException e) {
-                        return "실패";
-                    }
-                }).collect(Collectors.toList());
-                todayCommits.add(new CommitInfo(repo.getName(), messages));
-            }
-        }
-        if (!todayCommits.isEmpty()) {
-            sendToNotion(displayDate.toString(), todayCommits);
-            sendToSlack(String.format("✅ [보고] 오늘 %d개 레포 잔디 완료! 🚀", todayCommits.size()));
-        }
-    }
-
-    // --- 보안/전송 유틸리티 ---
     private static boolean restoreToken() {
         try {
             String b64 = System.getenv("GMAIL_TOKEN");
@@ -257,6 +251,18 @@ public class App {
         Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver()).authorize("user");
         return new Gmail.Builder(GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, credential)
                 .setApplicationName(APPLICATION_NAME).build();
+    }
+
+    private static void checkNewEmails(Gmail service) throws IOException {
+        ListMessagesResponse response = service.users().messages().list("me").setQ("is:unread").setMaxResults(3L)
+                .execute();
+        List<Message> messages = response.getMessages();
+        if (messages != null) {
+            for (Message m : messages) {
+                Message full = service.users().messages().get("me", m.getId()).execute();
+                sendToSlack("📬 [메일 알림] " + full.getSnippet());
+            }
+        }
     }
 
     private static void sendToNotion(String date, List<CommitInfo> commitInfos) throws IOException {
