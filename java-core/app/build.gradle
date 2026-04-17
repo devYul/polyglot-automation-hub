@@ -45,6 +45,9 @@ dependencies {
     
     // 3. Google Drive API (안정적인 최신 버전으로 교체)
     implementation 'com.google.apis:google-api-services-drive:v3-rev20230822-2.0.0'
+
+    // HTML 파싱 및 웹 크롤링을 위한 Jsoup 라이브러리
+    implementation 'org.jsoup:jsoup:1.17.2'
 }
 
 // Apply a specific Java toolchain to ease working on different environments.

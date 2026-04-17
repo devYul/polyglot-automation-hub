@@ -1,10 +1,10 @@
-name: Jarvis-Yul Morning Briefing
+name: Jarvis-Yul Morning Total Briefing
 
 on:
   schedule:
-    # 한국 시간(KST) 오전 8시는 UTC 전날 23:00입니다.
+    # 한국 시간(KST) 아침 08:00 (UTC 23:00)
     - cron: '0 23 * * *'
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch:
 
 jobs:
   run-java:
@@ -21,9 +21,10 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x java-core/gradlew
 
-      - name: Run Morning Task
+      - name: Run Total Briefing Task
         working-directory: java-core
-        run: ./gradlew run --args='NEWS' # 'NEWS' 인수 전달
+        # 'ALL'을 던져서 메일, 뉴스, 주식을 한꺼번에 처리합니다.
+        run: ./gradlew run --args='ALL'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}

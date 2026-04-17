@@ -28,7 +28,6 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
-import java.io.StringReader;
 
 public class App {
     private static final String GITHUB_TOKEN = System.getenv("GITHUB_TOKEN");
@@ -39,35 +38,36 @@ public class App {
     private static final String APPLICATION_NAME = "Jarvis-Yul-Automation";
     private static final GsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
     private static final List<String> SCOPES = Collections.singletonList(GmailScopes.GMAIL_READONLY);
-
     private static final String TOKENS_DIRECTORY = "tokens";
 
     public static void main(String[] args) {
-        // 실행 인수를 확인합니다. (없으면 ALL로 간주)
         String task = (args.length > 0) ? args[0].toUpperCase() : "ALL";
         try {
             System.out.println("🚀 Jarvis-Yul 시스템 가동 준비... (Task: " + task + ")");
 
-            // [공통] 보안 파일 복구는 무조건 1순위
-            if (!restoreToken())
-                return;
-
-            // [공통] Gmail 확인은 어느 배치에서든 수행 (원치 않으시면 분기 안으로 이동 가능)
-            Gmail gmailService = getGmailService();
-            if (gmailService != null) {
-                checkNewEmails(gmailService);
+            if (!restoreToken()) {
+                System.out.println("⚠️ 로컬 환경 감지: 인증이 필요한 작업(메일, 깃허브)은 스킵합니다.");
+            } else {
+                Gmail gmailService = getGmailService();
+                if (gmailService != null) {
+                    checkNewEmails(gmailService);
+                }
             }
 
-            // --- 인수에 따른 업무 분담 ---
-
-            // 아침 업무: 뉴스 브리핑
             if (task.equals("NEWS") || task.equals("ALL")) {
                 getHeadlineNews();
             }
 
-            // 밤 업무: GitHub 잔디 분석 및 노션 기록
+            if (task.equals("STOCK") || task.equals("ALL")) {
+                getStockMarket();
+            }
+
             if (task.equals("COMMIT") || task.equals("ALL")) {
-                runDailyAutomation();
+                if (GITHUB_TOKEN != null) {
+                    runDailyAutomation();
+                } else {
+                    System.out.println("⚠️ GITHUB_TOKEN이 없어 잔디 검사를 스킵합니다.");
+                }
             }
 
             System.out.println("🏁 [" + task + "] 임무가 완료되었습니다.");
@@ -78,137 +78,114 @@ public class App {
         }
     }
 
-    // ⚠️ 변경점 1: credentials.json 물리 파일을 아예 만들지 않습니다.
-    private static boolean restoreToken() {
-        try {
-            System.out.println("🔐 [Security] 인증 토큰 파일 복구 시작...");
-            String b64Token = System.getenv("GMAIL_TOKEN");
-            if (b64Token != null && !b64Token.trim().isEmpty()) {
-                File tokenDir = new File(TOKENS_DIRECTORY);
-                if (!tokenDir.exists())
-                    tokenDir.mkdirs();
-                File tokenFile = new File(tokenDir, "StoredCredential");
-                try (FileOutputStream fos = new FileOutputStream(tokenFile)) {
-                    fos.write(Base64.getDecoder().decode(b64Token.trim()));
-                    fos.flush();
-                }
-                System.out.println("✅ StoredCredential (토큰) 복구 완료!");
-                return true;
-            } else {
-                System.err.println("⚠️ GMAIL_TOKEN 시크릿이 없습니다.");
-                return false;
-            }
-        } catch (Exception e) {
-            System.err.println("❌ 토큰 복구 중 에러: " + e.getMessage());
-            return false;
-        }
-    }
+    // --- 주식 시황 모듈 (네이버 API + 차트 이미지) ---
+    public static void getStockMarket() {
+        System.out.println("📈 주식 시황 데이터 및 차트 수집 중...");
 
-    // ⚠️ 변경점 2: 인코딩 자동 감지 및 JSON 직접 파싱 (가장 강력한 보호 조치)
-    private static Gmail getGmailService() throws Exception {
-        String b64Creds = System.getenv("GMAIL_CREDENTIALS");
-        if (b64Creds == null || b64Creds.trim().isEmpty()) {
-            throw new Exception("❌ GMAIL_CREDENTIALS 시크릿이 존재하지 않습니다.");
-        }
+        Map<String, String> stockMap = new LinkedHashMap<>();
+        stockMap.put("TSLA.O", "TSLA (테슬라)");
+        stockMap.put("PLTR.O", "PLTR (팔란티어)");
 
-        byte[] decodedCreds = Base64.getDecoder().decode(b64Creds.trim());
-        String jsonString;
-
-        // PowerShell에서 넘어온 UTF-16LE, UTF-16BE 인코딩을 자동 감지하여 정상적인 문자열로 강제 복구
-        if (decodedCreds.length >= 2 && decodedCreds[0] == (byte) 0xFF && decodedCreds[1] == (byte) 0xFE) {
-            jsonString = new String(decodedCreds, StandardCharsets.UTF_16LE);
-        } else if (decodedCreds.length >= 2 && decodedCreds[0] == (byte) 0xFE && decodedCreds[1] == (byte) 0xFF) {
-            jsonString = new String(decodedCreds, StandardCharsets.UTF_16BE);
-        } else {
-            jsonString = new String(decodedCreds, StandardCharsets.UTF_8);
-        }
-
-        // 구글 JSON 파서를 미치게 만드는 숨겨진 BOM(\uFEFF) 문자 및 공백 완벽 제거
-        jsonString = jsonString.replace("\uFEFF", "").trim();
-
-        // 그럼에도 JSON이 아니라면, 정확히 어떤 쓰레기값이 들어갔는지 로그에 찍도록 명시
-        if (!jsonString.startsWith("{")) {
-            throw new Exception("❌ 해독된 문자열이 JSON 형식('{')으로 시작하지 않습니다. 첫 10글자: [" +
-                    jsonString.substring(0, Math.min(10, jsonString.length())) + "]");
-        }
-
-        // 물리 파일 경로를 버리고, 깨끗하게 정제된 문자열(메모리)을 구글 인증 객체에 직접 주입합니다.
-        GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new StringReader(jsonString));
-
-        GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
-                GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, clientSecrets, SCOPES)
-                .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY)))
-                .setAccessType("offline")
-                .build();
-
-        Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver()).authorize("user");
-        return new Gmail.Builder(GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, credential)
-                .setApplicationName(APPLICATION_NAME).build();
-    }
-
-    // --- GitHub, Notion, Slack 로직 (이전과 동일) ---
-    private static void runDailyAutomation() throws Exception {
-        System.out.println("🔍 GitHub 활동 분석 중...");
-        GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
-        LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
-        LocalDate fetchDate = displayDate.minusDays(1);
-
-        List<CommitInfo> todayCommits = new ArrayList<>();
-        for (GHRepository repo : github.getMyself().listRepositories()) {
-            List<GHCommit> commits = repo.queryCommits().since(java.sql.Date.valueOf(fetchDate)).list().toList();
-            if (!commits.isEmpty()) {
-                List<String> messages = commits.stream().map(c -> {
-                    try {
-                        return c.getCommitShortInfo().getMessage();
-                    } catch (IOException e) {
-                        return "로드 실패";
-                    }
-                }).collect(Collectors.toList());
-                todayCommits.add(new CommitInfo(repo.getName(), messages));
-            }
-        }
-
-        if (!todayCommits.isEmpty()) {
-            sendToNotion(displayDate.toString(), todayCommits);
-            sendToSlack(String.format("✅ [보고] 주인님, 오늘 %d개 레포에서 잔디를 심으셨습니다! 노션 박제 완료. 🚀", todayCommits.size()));
-        } else {
-            sendToSlack("🚨 [경고] 주인님, 오늘 아직 잔디가 비어있습니다! ㅡㅡ^");
-        }
-    }
-
-    private static void sendToNotion(String date, List<CommitInfo> commitInfos) throws IOException {
+        int successCount = 0;
         OkHttpClient client = new OkHttpClient();
-        JsonObject json = new JsonObject();
-        JsonObject parent = new JsonObject();
-        parent.addProperty("database_id", NOTION_DB_ID);
-        json.add("parent", parent);
-        JsonObject props = new JsonObject();
-        props.add("제목", createTitle(date + " 활동 보고"));
-        List<String> repoNames = commitInfos.stream().map(i -> i.repoName).collect(Collectors.toList());
-        props.add("레포지토리", createMultiSelect(repoNames));
-        String allMessages = commitInfos.stream().map(i -> "[" + i.repoName + "]\n- " + String.join("\n- ", i.messages))
-                .collect(Collectors.joining("\n\n"));
-        props.add("커밋 메시지", createText(allMessages));
-        JsonObject dateProp = new JsonObject();
-        JsonObject dateVal = new JsonObject();
-        dateVal.addProperty("start", date);
-        dateProp.add("date", dateVal);
-        props.add("날짜", dateProp);
-        JsonObject checkbox = new JsonObject();
-        checkbox.addProperty("checkbox", true);
-        props.add("상태", checkbox);
-        json.add("properties", props);
-        RequestBody body = RequestBody.create(new Gson().toJson(json),
-                MediaType.get("application/json; charset=utf-8"));
-        Request request = new Request.Builder().url("https://api.notion.com/v1/pages")
-                .addHeader("Authorization", "Bearer " + NOTION_TOKEN).addHeader("Notion-Version", "2022-06-28")
-                .post(body).build();
-        try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful())
-                System.err.println("❌ 노션 에러: " + response.body().string());
+        JsonArray attachments = new JsonArray();
+
+        for (Map.Entry<String, String> entry : stockMap.entrySet()) {
+            String apiTicker = entry.getKey();
+            String displayName = entry.getValue();
+            String baseTicker = apiTicker.split("\\.")[0];
+            String url = "https://api.stock.naver.com/stock/" + apiTicker + "/basic";
+
+            try {
+                Request request = new Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build();
+                try (Response response = client.newCall(request).execute()) {
+                    if (!response.isSuccessful() || response.body() == null)
+                        throw new Exception("HTTP " + response.code());
+
+                    String jsonResponse = response.body().string();
+                    JsonObject jsonObject = JsonParser.parseString(jsonResponse).getAsJsonObject();
+
+                    String price = jsonObject.get("closePrice").getAsString();
+                    String changeAmt = jsonObject.get("compareToPreviousClosePrice").getAsString();
+                    String changePct = jsonObject.get("fluctuationsRatio").getAsString();
+
+                    String directionIcon = "➖";
+                    String hexColor = "#8E8E93";
+
+                    if (changePct.startsWith("-")) {
+                        directionIcon = "🔵";
+                        hexColor = "#007AFF";
+                    } else if (!changePct.equals("0") && !changePct.equals("0.00")) {
+                        directionIcon = "🔴";
+                        hexColor = "#FF3B30";
+                        if (!changeAmt.startsWith("+"))
+                            changeAmt = "+" + changeAmt;
+                        if (!changePct.startsWith("+"))
+                            changePct = "+" + changePct;
+                    }
+
+                    JsonObject attachment = new JsonObject();
+                    attachment.addProperty("color", hexColor);
+                    attachment.addProperty("title", displayName);
+                    attachment.addProperty("title_link",
+                            "https://finance.naver.com/world/item/main.naver?symbol=" + apiTicker);
+                    attachment.addProperty("text", "• 현재가: *$" + price + "*\n• 등락: " + directionIcon + " " + changeAmt
+                            + " (" + changePct + "%)");
+                    attachment.addProperty("image_url",
+                            "https://finviz.com/chart.ashx?t=" + baseTicker + "&ty=c&ta=1&p=d&s=l");
+                    attachments.add(attachment);
+                    successCount++;
+                }
+            } catch (Exception e) {
+                JsonObject errorAttachment = new JsonObject();
+                errorAttachment.addProperty("title", "⚠️ " + displayName + " 수집 실패");
+                errorAttachment.addProperty("text", e.getMessage());
+                attachments.add(errorAttachment);
+            }
+        }
+        if (successCount > 0)
+            sendRichSlackMessage("📈 *[자비스 주식 스나이퍼 브리핑]*", attachments);
+    }
+
+    // --- 뉴스 RSS 브리핑 ---
+    private static void getHeadlineNews() {
+        System.out.println("📰 뉴스 수집 중...");
+        try {
+            OkHttpClient client = new OkHttpClient();
+            StringBuilder slackMessage = new StringBuilder("📰 *[자비스 모닝 종합 브리핑]*\n\n");
+            Map<String, String> categories = new LinkedHashMap<>();
+            categories.put("BUSINESS", "📈 경제");
+            categories.put("TECHNOLOGY", "💻 IT");
+            categories.put("NATION", "🇰🇷 국내");
+            categories.put("WORLD", "🌍 국제");
+
+            DocumentBuilder builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+            for (Map.Entry<String, String> entry : categories.entrySet()) {
+                String url = "https://news.google.com/rss/headlines/section/topic/" + entry.getKey()
+                        + "?hl=ko&gl=KR&ceid=KR:ko";
+                Request request = new Request.Builder().url(url).build();
+                try (Response response = client.newCall(request).execute()) {
+                    Document doc = builder.parse(new InputSource(new StringReader(response.body().string())));
+                    NodeList items = doc.getElementsByTagName("item");
+                    if (items.getLength() > 0) {
+                        slackMessage.append("*").append(entry.getValue()).append("*\n");
+                        for (int i = 0; i < Math.min(2, items.getLength()); i++) {
+                            Element item = (Element) items.item(i);
+                            String title = item.getElementsByTagName("title").item(0).getTextContent();
+                            String link = item.getElementsByTagName("link").item(0).getTextContent();
+                            slackMessage.append("• <").append(link).append("|").append(title).append(">\n");
+                        }
+                        slackMessage.append("\n");
+                    }
+                }
+            }
+            sendToSlack(slackMessage.toString());
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
+    // --- Gmail 알림 ---
     private static void checkNewEmails(Gmail service) throws IOException {
         ListMessagesResponse response = service.users().messages().list("me").setQ("is:unread").setMaxResults(3L)
                 .execute();
@@ -221,17 +198,102 @@ public class App {
         }
     }
 
-    private static void sendToSlack(String message) {
+    // --- 깃허브 잔디/노션 박제 (기존 로직 유지) ---
+    private static void runDailyAutomation() throws Exception {
+        GitHub github = new GitHubBuilder().withOAuthToken(GITHUB_TOKEN).build();
+        LocalDate displayDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        List<CommitInfo> todayCommits = new ArrayList<>();
+        for (GHRepository repo : github.getMyself().listRepositories()) {
+            List<GHCommit> commits = repo.queryCommits().since(java.sql.Date.valueOf(displayDate.minusDays(1))).list()
+                    .toList();
+            if (!commits.isEmpty()) {
+                List<String> messages = commits.stream().map(c -> {
+                    try {
+                        return c.getCommitShortInfo().getMessage();
+                    } catch (IOException e) {
+                        return "실패";
+                    }
+                }).collect(Collectors.toList());
+                todayCommits.add(new CommitInfo(repo.getName(), messages));
+            }
+        }
+        if (!todayCommits.isEmpty()) {
+            sendToNotion(displayDate.toString(), todayCommits);
+            sendToSlack(String.format("✅ [보고] 오늘 %d개 레포 잔디 완료! 🚀", todayCommits.size()));
+        }
+    }
+
+    // --- 보안/전송 유틸리티 ---
+    private static boolean restoreToken() {
+        try {
+            String b64 = System.getenv("GMAIL_TOKEN");
+            if (b64 == null || b64.isEmpty())
+                return false;
+            File dir = new File(TOKENS_DIRECTORY);
+            if (!dir.exists())
+                dir.mkdirs();
+            try (FileOutputStream fos = new FileOutputStream(new File(dir, "StoredCredential"))) {
+                fos.write(Base64.getDecoder().decode(b64.trim()));
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static Gmail getGmailService() throws Exception {
+        String b64 = System.getenv("GMAIL_CREDENTIALS");
+        if (b64 == null || b64.isEmpty())
+            return null;
+        byte[] decoded = Base64.getDecoder().decode(b64.trim());
+        String json = new String(decoded, StandardCharsets.UTF_8).replace("\uFEFF", "").trim();
+        GoogleClientSecrets secrets = GoogleClientSecrets.load(JSON_FACTORY, new StringReader(json));
+        GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
+                GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, secrets, SCOPES)
+                .setDataStoreFactory(new FileDataStoreFactory(new java.io.File(TOKENS_DIRECTORY)))
+                .setAccessType("offline").build();
+        Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver()).authorize("user");
+        return new Gmail.Builder(GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, credential)
+                .setApplicationName(APPLICATION_NAME).build();
+    }
+
+    private static void sendToNotion(String date, List<CommitInfo> commitInfos) throws IOException {
+        if (NOTION_TOKEN == null || NOTION_DB_ID == null)
+            return;
+        OkHttpClient client = new OkHttpClient();
+        JsonObject json = new JsonObject();
+        JsonObject parent = new JsonObject();
+        parent.addProperty("database_id", NOTION_DB_ID);
+        json.add("parent", parent);
+        JsonObject props = new JsonObject();
+        props.add("제목", createTitle(date + " 활동 보고"));
+        json.add("properties", props);
+        RequestBody body = RequestBody.create(new Gson().toJson(json),
+                MediaType.get("application/json; charset=utf-8"));
+        Request req = new Request.Builder().url("https://api.notion.com/v1/pages")
+                .addHeader("Authorization", "Bearer " + NOTION_TOKEN).addHeader("Notion-Version", "2022-06-28")
+                .post(body).build();
+        client.newCall(req).execute().close();
+    }
+
+    private static void sendToSlack(String text) {
+        sendRichSlackMessage(text, null);
+    }
+
+    private static void sendRichSlackMessage(String mainText, JsonArray attachments) {
         if (SLACK_WEBHOOK_URL == null)
             return;
         try {
             OkHttpClient client = new OkHttpClient();
             JsonObject json = new JsonObject();
-            json.addProperty("text", message);
+            if (mainText != null)
+                json.addProperty("text", mainText);
+            if (attachments != null)
+                json.add("attachments", attachments);
             RequestBody body = RequestBody.create(new Gson().toJson(json),
                     MediaType.get("application/json; charset=utf-8"));
-            Request request = new Request.Builder().url(SLACK_WEBHOOK_URL).post(body).build();
-            client.newCall(request).execute().close();
+            Request req = new Request.Builder().url(SLACK_WEBHOOK_URL).post(body).build();
+            client.newCall(req).execute().close();
         } catch (Exception ignored) {
         }
     }
@@ -248,30 +310,6 @@ public class App {
         return w;
     }
 
-    private static JsonObject createText(String text) {
-        JsonObject w = new JsonObject();
-        JsonArray a = new JsonArray();
-        JsonObject t = new JsonObject();
-        JsonObject c = new JsonObject();
-        c.addProperty("content", text);
-        t.add("text", c);
-        a.add(t);
-        w.add("rich_text", a);
-        return w;
-    }
-
-    private static JsonObject createMultiSelect(List<String> names) {
-        JsonObject w = new JsonObject();
-        JsonArray a = new JsonArray();
-        for (String n : names) {
-            JsonObject o = new JsonObject();
-            o.addProperty("name", n);
-            a.add(o);
-        }
-        w.add("multi_select", a);
-        return w;
-    }
-
     private static class CommitInfo {
         String repoName;
         List<String> messages;
@@ -279,75 +317,6 @@ public class App {
         CommitInfo(String r, List<String> m) {
             this.repoName = r;
             this.messages = m;
-        }
-    }
-
-    private static void getHeadlineNews() {
-        System.out.println("📰 구글 뉴스(RSS) 카테고리별 수집 중...");
-
-        try {
-            OkHttpClient client = new OkHttpClient();
-            StringBuilder slackMessage = new StringBuilder();
-            slackMessage.append("📰 *[자비스 모닝 종합 브리핑]*\n\n");
-
-            // 구글 뉴스 전용 카테고리 코드
-            Map<String, String> categories = new LinkedHashMap<>();
-            categories.put("BUSINESS", "📈 경제/비즈니스");
-            categories.put("TECHNOLOGY", "💻 IT/기술");
-            categories.put("NATION", "🌐 국내/사회");
-            categories.put("WORLD", "🌍 국제/세계");
-            categories.put("ENTERTAINMENT", "🎬 엔터테인먼트");
-
-            int totalNewsCount = 0;
-
-            // 자바 내장 XML 파서 세팅
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
-
-            for (Map.Entry<String, String> entry : categories.entrySet()) {
-                String catCode = entry.getKey();
-                String catName = entry.getValue();
-
-                // 구글 뉴스 RSS URL (한국어, 한국 지역 설정)
-                String url = "https://news.google.com/rss/headlines/section/topic/" + catCode
-                        + "?hl=ko&gl=KR&ceid=KR:ko";
-                Request request = new Request.Builder().url(url).build();
-
-                try (Response response = client.newCall(request).execute()) {
-                    if (!response.isSuccessful()) {
-                        System.out.println("❌ [" + catName + "] 호출 실패: " + response.code());
-                        continue;
-                    }
-
-                    String xmlString = response.body().string();
-                    Document doc = builder.parse(new InputSource(new StringReader(xmlString)));
-                    NodeList itemNodes = doc.getElementsByTagName("item");
-
-                    if (itemNodes.getLength() > 0) {
-                        slackMessage.append("*").append(catName).append("*\n");
-                        // 상위 2개 뉴스만 추출
-                        for (int i = 0; i < Math.min(5, itemNodes.getLength()); i++) {
-                            Element item = (Element) itemNodes.item(i);
-                            String title = item.getElementsByTagName("title").item(0).getTextContent();
-                            String link = item.getElementsByTagName("link").item(0).getTextContent();
-
-                            slackMessage.append("• <").append(link).append("|").append(title).append(">\n");
-                            totalNewsCount++;
-                        }
-                        slackMessage.append("\n");
-                    }
-                }
-            }
-
-            if (totalNewsCount > 0) {
-                sendToSlack(slackMessage.toString());
-                System.out.println("✅ 구글 뉴스 총 " + totalNewsCount + "개 슬랙 전송 완료!");
-            } else {
-                System.out.println("⚠️ 오늘 수집된 뉴스가 전혀 없습니다.");
-            }
-
-        } catch (Exception e) {
-            System.err.println("❌ 뉴스 수집 중 에러: " + e.getMessage());
         }
     }
 }
