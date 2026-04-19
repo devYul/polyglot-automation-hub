@@ -37,7 +37,7 @@ graph TD
     C -- 3. Insert 1-Commit 1-Row --> E
     C -- 4. Send Briefing --> F
     C -- 5. Fetch Unread / News --> G
-
+```
 🔥 Core Technical Challenges (트러블슈팅)
 단순한 API 연동을 넘어, 시스템 운영 중 발생할 수 있는 데이터 정합성 및 시간 오차 문제를 해결하는 데 집중했습니다.
 
