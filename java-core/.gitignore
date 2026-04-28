@@ -11,3 +11,6 @@ StoredCredential
 # Google Credentials
 credentials.json
 **/src/main/resources/credentials.json
+
+# Local Batch Files
+*.bat
