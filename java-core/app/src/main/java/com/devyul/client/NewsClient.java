@@ -28,6 +28,7 @@ public class NewsClient {
             Map<String, String> categories = new LinkedHashMap<>();
             categories.put("BUSINESS", "📈 경제");
             categories.put("TECHNOLOGY", "💻 IT");
+            categories.put("SPORTS", "⚽ 스포츠");
             categories.put("NATION", "🇰🇷 국내");
             categories.put("WORLD", "🌍 국제");
 
@@ -41,7 +42,7 @@ public class NewsClient {
                     NodeList items = doc.getElementsByTagName("item");
                     if (items.getLength() > 0) {
                         slackMessage.append("*").append(entry.getValue()).append("*\n");
-                        for (int i = 0; i < Math.min(2, items.getLength()); i++) {
+                        for (int i = 0; i < Math.min(5, items.getLength()); i++) {
                             Element item = (Element) items.item(i);
                             String title = item.getElementsByTagName("title").item(0).getTextContent();
                             String link = item.getElementsByTagName("link").item(0).getTextContent();

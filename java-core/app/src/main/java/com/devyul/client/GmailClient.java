@@ -27,7 +27,8 @@ public class GmailClient {
     private static final String APPLICATION_NAME = "Jarvis-Yul-Automation";
     private static final GsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
     private static final List<String> SCOPES = Collections.singletonList(GmailScopes.GMAIL_READONLY);
-    private static final String TOKENS_DIRECTORY = "tokens";
+    private static final String TOKENS_DIRECTORY_NAME = "tokens";
+    private static final String CREDENTIALS_FILE_NAME = "credentials.json";
 
     private GmailClient() {
     }
@@ -35,12 +36,11 @@ public class GmailClient {
     public static void sendUnreadMailBriefing() {
         try {
             if (!restoreToken()) {
-                System.out.println("⚠️ Gmail 토큰 복원 실패: 인증이 필요한 작업은 스킵합니다.");
-                return;
+                System.out.println("ℹ️ Gmail 토큰 파일이 없거나 환경 변수가 설정되지 않았습니다.");
             }
             Gmail service = getGmailService();
             if (service == null) {
-                System.out.println("⚠️ Gmail 서비스 생성 실패: 작업을 스킵합니다.");
+                System.out.println("⚠️ Gmail 서비스 생성 실패: credentials.json 파일을 찾을 수 없습니다.");
                 return;
             }
 
@@ -58,17 +58,47 @@ public class GmailClient {
         }
     }
 
+    private static File findFile(String fileName) {
+        // 1. 현재 디렉토리 확인
+        File file = new File(fileName);
+        if (file.exists()) return file;
+
+        // 2. app/ 폴더 아래 확인
+        file = new File("app/" + fileName);
+        if (file.exists()) return file;
+
+        // 3. 상위 디렉토리 확인 (혹시나 해서)
+        file = new File("../" + fileName);
+        if (file.exists()) return file;
+
+        return null;
+    }
+
+    private static File findDirectory(String dirName) {
+        File dir = new File(dirName);
+        if (dir.exists() && dir.isDirectory()) return dir;
+
+        dir = new File("app/" + dirName);
+        if (dir.exists() && dir.isDirectory()) return dir;
+
+        return new File("app/" + dirName); // 못 찾으면 기본값으로 생성할 위치 반환
+    }
+
     private static boolean restoreToken() {
         try {
+            File dir = findDirectory(TOKENS_DIRECTORY_NAME);
+            File tokenFile = new File(dir, "StoredCredential");
+            
+            if (tokenFile.exists() && tokenFile.length() > 0) {
+                return true;
+            }
+
             String b64 = System.getenv("GMAIL_TOKEN");
-            if (b64 == null)
-                return false;
+            if (b64 == null) return false;
 
-            File dir = new File(TOKENS_DIRECTORY);
-            if (!dir.exists())
-                dir.mkdirs();
+            if (!dir.exists()) dir.mkdirs();
 
-            try (FileOutputStream fos = new FileOutputStream(new File(dir, "StoredCredential"))) {
+            try (FileOutputStream fos = new FileOutputStream(tokenFile)) {
                 fos.write(Base64.getDecoder().decode(b64.trim()));
             }
             return true;
@@ -78,16 +108,27 @@ public class GmailClient {
     }
 
     private static Gmail getGmailService() throws IOException, GeneralSecurityException {
+        GoogleClientSecrets secrets;
         String b64 = System.getenv("GMAIL_CREDENTIALS");
-        if (b64 == null)
-            return null;
 
-        byte[] decoded = Base64.getDecoder().decode(b64.trim());
-        GoogleClientSecrets secrets = GoogleClientSecrets.load(JSON_FACTORY, new StringReader(new String(decoded)));
+        if (b64 != null && !b64.isEmpty() && !b64.contains(".json")) {
+            byte[] decoded = Base64.getDecoder().decode(b64.trim());
+            secrets = GoogleClientSecrets.load(JSON_FACTORY, new StringReader(new String(decoded)));
+        } else {
+            File credentialsFile = findFile(CREDENTIALS_FILE_NAME);
+            if (credentialsFile != null) {
+                try (java.io.FileInputStream fis = new java.io.FileInputStream(credentialsFile)) {
+                    secrets = GoogleClientSecrets.load(JSON_FACTORY, new java.io.InputStreamReader(fis));
+                }
+            } else {
+                return null;
+            }
+        }
 
+        File tokensDir = findDirectory(TOKENS_DIRECTORY_NAME);
         GoogleAuthorizationCodeFlow flow = new GoogleAuthorizationCodeFlow.Builder(
                 GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, secrets, SCOPES)
-                .setDataStoreFactory(new FileDataStoreFactory(new File(TOKENS_DIRECTORY)))
+                .setDataStoreFactory(new FileDataStoreFactory(tokensDir))
                 .build();
 
         Credential credential = new AuthorizationCodeInstalledApp(flow, new LocalServerReceiver()).authorize("user");
