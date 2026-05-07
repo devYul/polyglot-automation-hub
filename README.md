@@ -173,11 +173,11 @@ GitHub Actions는 Push 이벤트 트리거 용도로만 유지.
 
 > 📌 Slack Morning Briefing 알림
 
-<img width="2042" height="1059" alt="image" src="https://github.com/user-attachments/ass...">
+<img width="2068" height="1060" alt="image" src="https://github.com/user-attachments/assets/bfd43a8d-66a0-4678-8804-f8d33893582f" />
 
 > 📌 Notion 커밋 데이터베이스
 
-<img width="1321" height="1050" alt="image" src="https://github.com/user-attachments/ass...">
+<img width="1365" height="1067" alt="image" src="https://github.com/user-attachments/assets/836d31e5-8b35-413a-a097-1425d1753fe0" />
 
 <br>
 
