@@ -171,8 +171,6 @@ GitHub Actions는 Push 이벤트 트리거 용도로만 유지.
 
 ## 📸 실행 결과
 
-## 📸 실행 결과
-
 > 📌 Slack Morning Briefing 알림
 
 <img width="2042" height="1059" alt="image" src="https://github.com/user-attachments/ass...">
